@@ -149,12 +149,27 @@ fake_pkg.mkdir(parents=True)
 hd6.append(policy.consent_key(str(fake_pkg / "Notepad.exe"), "").startswith("pkg:") is False)
 for bad in ("\\/server/share/t.exe", "/\\server\\share\\t.exe", "\\\\?\\UNC\\server\\share\\t.exe",
             "\\\\?\\C:\\Windows\\System32\\notepad.exe", "file:///C:/Windows/System32/notepad.exe",
-            "C:\\Windows\\System32\\notepad.exe:evil.exe"):
+            "C:\\Windows\\System32\\notepad.exe:evil.exe", "\\??\\C:\\Windows\\System32\\notepad.exe",
+            "\\\\.\\C:\\Windows\\System32\\notepad.exe", "\\Windows\\System32\\notepad.exe", "tool.exe",
+            "C:\\does\\not\\exist.exe"):
     try:
         policy.check_launch_target(bad)
         hd6.append(False)
     except Exception as e:
         hd6.append(type(e).__name__ == "Denied")
+# a junction on a local drive that leads somewhere else is judged by where it leads (realpath), and a normal
+# local file still launches
+jdir = tmp / "jdir"
+try:  # no shell: the junction is made through the Windows API directly
+    import _winapi
+    _winapi.CreateJunction(os.path.join(os.environ["WINDIR"], "System32"), str(jdir))
+    junction_ok = True
+except OSError:
+    junction_ok = False
+if junction_ok:
+    hd6.append(policy.local_path_problem(str(jdir / "notepad.exe")) is None)  # local target: fine
+hd6.append(policy.local_path_problem(os.path.join(os.environ["WINDIR"], "System32", "notepad.exe")) is None)
+hd6.append(policy.local_path_problem("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App") is None)
 swap = tmp / "swap.exe"
 _sh.copy2(os.path.join(os.environ["WINDIR"], "System32", "notepad.exe"), swap)
 first = policy.original_name(str(swap))

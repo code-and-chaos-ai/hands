@@ -112,26 +112,37 @@ def consent_key(exe: str, app: str) -> str:
 
 
 def local_path_problem(path: str) -> str | None:
-    """Why a launch path isn't a plain local file path, or None. Checked on the normalised spelling, before any
-    filesystem call: network shares (any \\\\ form, device paths included), URLs, alternate data streams, and drive
-    letters Windows reports as network drives."""
-    p = os.path.normpath((path or "").replace("/", "\\"))
-    low = p.lower()
-    if low.startswith("\\\\") or os.path.splitdrive(p)[0].startswith("\\\\"):
-        return "a network or device path"
-    if low.startswith("file:") or "://" in low:
-        return "a URL"
-    if ":" in p[2:]:
-        return "an alternate data stream"
-    drive = os.path.splitdrive(p)[0]
-    if drive:
+    """Why a launch path isn't a plain local file, or None. An allow-list, not a list of bad spellings: the path,
+    and again its final resolved target (links and junctions followed), must be 'X:\\...' with no ':' after the
+    drive, on a drive Windows reports as fixed or removable. App ids pass (they aren't paths)."""
+    import re
+    if "!" in (path or "") and not re.search(r"[\\/:]", path):
+        return None  # an installed app's id (Publisher.App_hash!App): not a path at all
+    shape = re.compile(r"^[A-Za-z]:\\(?:[^:]*)$")  # ALLOW-list: drive letter, ':\', then no ':' anywhere
+
+    def check(p: str) -> str | None:
+        if not shape.match(p):
+            return "a path that isn't a plain local drive path (network, device, URL, stream or relative)"
         try:
             import win32file
-            if win32file.GetDriveType(drive + "\\") == 4:  # DRIVE_REMOTE
-                return "a network drive"
+            t = win32file.GetDriveType(p[:3])
         except Exception:
             return "a drive whose type can't be read"
-    return None
+        if t not in (2, 3):  # DRIVE_REMOVABLE, DRIVE_FIXED
+            return "a network or virtual drive"
+        return None
+
+    p = os.path.normpath((path or "").replace("/", "\\"))
+    why = check(p)
+    if why:
+        return why
+    try:  # the final target: a junction or link on a local path may point at a share
+        final = os.path.realpath(p, strict=True)
+    except (OSError, ValueError):
+        return "a path that doesn't resolve to an existing file"
+    if final.startswith("\\\\?\\") and final[5:6] == ":":
+        final = final[4:]
+    return check(final)
 
 
 _ORIG_CACHE: dict[tuple, str] = {}
