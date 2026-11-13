@@ -7,7 +7,8 @@ import os, subprocess, sys, time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ["HANDS_TEST_HOOKS"] = "1"
-os.environ["HANDS_TEST_ALLOW"] = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App;hands_scratch.exe"
+os.environ["HANDS_TEST_ALLOW"] = ("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App;" + os.path.normcase(os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "fixtures", "hands_scratch.exe")))
 from engine import session, win
 import uiautomation as auto
 import win32gui

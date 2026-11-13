@@ -399,15 +399,19 @@ class Hands:
         if self.ov.alive:
             self.ov.mode(True)
         front = w.id
+        # only popups that passed the deny list and consent (each by its OWN process) may ever take real input: an
+        # owned dialog can belong to anyone, a credential prompt included
+        allowed = (w.id, *self._popups(w.id))
         if not win32gui.IsWindowEnabled(w.id):
             # a modal dialog (Save As, a message box) has disabled this window: keys sent to the window itself are
-            # thrown away, so real input goes to the dialog in front of it
-            modal = [p for p in win.popups_of(w.id) if win32gui.IsWindowEnabled(p)]
-            if modal:
-                front = modal[-1]
-        if not win.set_foreground(front) and win.foreground() not in (w.id, *win.popups_of(w.id)):
+            # thrown away, so real input goes to the dialog in front of it, if it is one we may touch
+            modal = [p for p in allowed[1:] if win32gui.IsWindowEnabled(p)]
+            if not modal:
+                raise HandsError("A dialog Hands may not touch is blocking this window; it's the person's to answer.")
+            front = modal[-1]
+        if not win.set_foreground(front) and win.foreground() not in allowed:
             raise HandsError("Couldn't bring the window forward for real input.")
-        if point is not None and win.root_at(*point) not in (w.id, *win.popups_of(w.id)):
+        if point is not None and win.root_at(*point) not in allowed:
             raise HandsError("Another window covers that point; I won't click into something that isn't mine to touch.")
         her_cursor = win.cursor_pos()  # saved right before this action, given back right after
         try:

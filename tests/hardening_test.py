@@ -116,6 +116,55 @@ except Exception:
 claude_door._app_window, claude_door._find, claude_door.auto.ControlFromHandle, claude_door.notify_cmd = orig
 res["HD5"] = hd5
 
+# HD6: consent is for one program, not a file name; a renamed shell is still a shell; network paths never launch
+import shutil as _sh
+fake_dir = tmp / "elsewhere"
+fake_dir.mkdir()
+renamed = fake_dir / "notashell.exe"
+_sh.copy2(os.path.join(os.environ["WINDIR"], "System32", "cmd.exe"), renamed)
+k1 = policy.consent_key(r"C:\Windows\System32\notepad.exe", "")
+k2 = policy.consent_key(str(fake_dir / "notepad.exe"), "")
+kpkg1 = policy.consent_key(r"C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.2510.6.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe", "")
+kpkg2 = policy.consent_key(r"C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.2601.1.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe", "")
+hd6 = [k1 != k2, kpkg1 == kpkg2 == "pkg:microsoft.windowsnotepad__8wekyb3d8bbwe",
+       policy.consent_key("", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App") == "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"]
+for call in (lambda: policy.check_launch_target(str(renamed)),
+             lambda: policy.check_denied(str(renamed), "", "x", "x"),
+             lambda: policy.check_launch_target(r"\\server\share\tool.exe"),
+             lambda: policy.check_launch_target("//server/share/tool.exe")):
+    try:
+        call()
+        hd6.append(False)
+    except Exception as e:
+        hd6.append(type(e).__name__ == "Denied")
+try:
+    policy.check_launch_target(r"C:\Windows\System32\notepad.exe")
+    hd6.append(True)  # an ordinary program still launches
+except Exception:
+    hd6.append(False)
+res["HD6"] = all(hd6)
+
+# HD7: real input never goes to a blocking dialog that failed the deny list / consent (it's the person's)
+from engine import session as _s
+import win32gui as _wg
+H = _s.Hands(overlay=False)
+fired = []
+class _W:
+    id = 100
+saved = (_wg.IsWindowEnabled, _s.win.popups_of, H._popups, H._wait_her_idle)
+_wg.IsWindowEnabled = lambda h: h != 100          # the window is disabled by a modal dialog...
+_s.win.popups_of = lambda h: [200]                  # ...owned popup 200 exists...
+H._popups = lambda h: []                            # ...but it did NOT pass deny / consent
+H._wait_her_idle = lambda: None
+try:
+    H._foreground(_W(), lambda: fired.append(1))
+    hd7 = False
+except Exception as e:
+    hd7 = "may not touch" in str(e) and not fired
+finally:
+    _wg.IsWindowEnabled, _s.win.popups_of, H._popups, H._wait_her_idle = saved
+res["HD7"] = hd7
+
 for k, v in res.items():
     print(f"{k}: {'PASS' if v else 'FAIL'}")
 print("SUMMARY " + " ".join(f"{k}:{'PASS' if v else 'FAIL'}" for k, v in res.items()))

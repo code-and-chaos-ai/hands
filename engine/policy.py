@@ -58,8 +58,11 @@ def check_launch_target(path: str) -> None:
     ext = os.path.splitext(low)[1]
     if ext in SCRIPT_EXT:
         raise Denied(f"I never launch {ext} files: that runs code instead of opening an app.")
-    if os.path.basename(low) in DENY_EXES:
-        raise Denied(f"I never launch {os.path.basename(low)}: hard deny list.")
+    if (path or "").startswith(("\\\\", "//")):
+        raise Denied("I never launch from a network path: copy the program locally and ask the person.")
+    hit = _denied_exe(path)
+    if hit:
+        raise Denied(f"I never launch {hit}: hard deny list.")
 
 
 def is_run_dialog(hwnd: int, exe: str, cls: str) -> bool:
@@ -77,8 +80,8 @@ def is_run_dialog(hwnd: int, exe: str, cls: str) -> bool:
 
 
 def check_denied(exe: str, app: str, title: str, cls: str, hwnd: int = 0) -> None:
-    base = os.path.basename(exe or "").lower()
-    if base in DENY_EXES:
+    base = _denied_exe(exe)
+    if base:
         raise Denied(f"I never drive {base}: it is on the hard deny list (terminals, auth, security, "
                      f"password managers, my own permission prompts).")
     if denied_aumid(app):
@@ -88,7 +91,56 @@ def check_denied(exe: str, app: str, title: str, cls: str, hwnd: int = 0) -> Non
 
 
 def consent_key(exe: str, app: str) -> str:
-    return app if "!" in app else os.path.basename(exe or app).lower()
+    """What the person's consent is FOR. An app id (AUMID) as is. A Store app's exe by its package identity (name +
+    publisher, without the version, so an update doesn't re-ask). Any other exe by its full normalised path, so
+    consent to one program never covers a same-named file somewhere else."""
+    if "!" in (app or ""):
+        return app
+    path = exe or app or ""
+    if not os.path.isabs(path):
+        return os.path.basename(path).lower()
+    norm = os.path.normcase(os.path.abspath(path))
+    parts = norm.split(os.sep)
+    if "windowsapps" in parts:
+        i = parts.index("windowsapps")
+        if i + 1 < len(parts):
+            pkg = parts[i + 1].split("_")
+            if len(pkg) >= 2:
+                return f"pkg:{pkg[0]}__{pkg[-1]}"
+    return norm
+
+
+_ORIG_CACHE: dict[str, str] = {}
+
+
+def original_name(exe: str) -> str:
+    """The file's own embedded name (its version resource's OriginalFilename), lowercase, without '.mui': a renamed
+    copy of cmd.exe still says it is cmd.exe. Empty when the file has none or can't be read."""
+    if not exe or not os.path.isfile(exe):
+        return ""
+    key = os.path.normcase(os.path.abspath(exe))
+    if key in _ORIG_CACHE:
+        return _ORIG_CACHE[key]
+    name = ""
+    try:
+        import win32api
+        lang, page = win32api.GetFileVersionInfo(exe, "\\VarFileInfo\\Translation")[0]
+        name = win32api.GetFileVersionInfo(exe, f"\\StringFileInfo\\{lang:04x}{page:04x}\\OriginalFilename") or ""
+    except Exception:
+        name = ""
+    name = name.strip().lower()
+    if name.endswith(".mui"):
+        name = name[:-4]
+    _ORIG_CACHE[key] = name
+    return name
+
+
+def _denied_exe(exe: str) -> str | None:
+    """The deny-list name this exe answers to, by its file name OR its embedded original name."""
+    for n in (os.path.basename(exe or "").lower(), original_name(exe)):
+        if n and n in DENY_EXES:
+            return n
+    return None
 
 
 class Consent:
