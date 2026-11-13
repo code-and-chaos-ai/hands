@@ -174,4 +174,4 @@ Test switches only work together with `HANDS_TEST_HOOKS=1`: `HANDS_TEST_ALLOW=<k
 opens, `HANDS_PROOF=1` makes the overlay visible to screenshots. Never set them in normal use.
 
 ## License
-MIT. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Code & Chaos.

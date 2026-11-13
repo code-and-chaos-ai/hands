@@ -1,6 +1,6 @@
 // Hands overlay: the agent's presence on the person's screen while it works.
 // Deep-pink edge around the window he's in, a pill to stop him, his own cursor
-// (never the person's), and the consent card. C# 5 for the Framework compiler. MIT.
+// (never the person's), and the consent card. C# 5 for the Framework compiler. Apache-2.0.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
