@@ -168,6 +168,17 @@ except OSError:
     junction_ok = False
 if junction_ok:
     hd6.append(policy.local_path_problem(str(jdir / "notepad.exe")) is None)  # local target: fine
+    # what was judged is what gets launched: the check returns the junction's FINAL target
+    judged = policy.check_launch_target(str(jdir / "notepad.exe"))
+    hd6.append(os.path.normcase(judged) == os.path.normcase(os.path.join(os.environ["WINDIR"], "System32", "notepad.exe")))
+    # a junction whose target is a denied program is refused even though the spelling looks harmless
+    jfake = tmp / "jfake"
+    _winapi.CreateJunction(os.path.join(os.environ["WINDIR"], "System32"), str(jfake))
+    try:
+        policy.check_launch_target(str(jfake / "cmd.exe"))
+        hd6.append(False)
+    except Exception as e:
+        hd6.append(type(e).__name__ == "Denied")
 hd6.append(policy.local_path_problem(os.path.join(os.environ["WINDIR"], "System32", "notepad.exe")) is None)
 hd6.append(policy.local_path_problem("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App") is None)
 swap = tmp / "swap.exe"

@@ -49,21 +49,36 @@ def denied_aumid(aumid: str) -> bool:
     return any(a.startswith(p) for p in DENY_AUMID_PREFIX)
 
 
-def check_launch_target(path: str) -> None:
-    """Refuse before anything starts: the resolved target, never the words I was given."""
-    low = (path or "").casefold()
-    if "!" in path and denied_aumid(path):
+def check_launch_target(path: str) -> str:
+    """Refuse before anything starts. Returns the ONE path every later step must use (consent, the launch, the
+    window match): for a file, its final target with links and junctions followed, and every check below runs on
+    both the spelling given and that final target, so what was judged is what gets launched."""
+    if "!" in (path or "") and denied_aumid(path):
         raise Denied(f"I never launch {path}: hard deny list.")
-    # file checks run for every target, app ids included: a folder named "x!y" must not hide a script
-    ext = os.path.splitext(low)[1]
-    if ext in SCRIPT_EXT:
-        raise Denied(f"I never launch {ext} files: that runs code instead of opening an app.")
     why = local_path_problem(path)  # an app id has no drive, share, scheme or stream, so it always passes
     if why:
         raise Denied(f"I never launch from {why}: only programs on this machine's own drives.")
-    hit = _denied_exe(path)
-    if hit:
-        raise Denied(f"I never launch {hit}: hard deny list.")
+    final = _final_path(path)
+    for p in dict.fromkeys((path, final)):
+        # file checks run for every target, app ids included: a folder named "x!y" must not hide a script
+        ext = os.path.splitext((p or "").casefold())[1]
+        if ext in SCRIPT_EXT:
+            raise Denied(f"I never launch {ext} files: that runs code instead of opening an app.")
+        hit = _denied_exe(p)
+        if hit:
+            raise Denied(f"I never launch {hit}: hard deny list.")
+    return final
+
+
+def _final_path(path: str) -> str:
+    """A file path's final target (links and junctions followed, plain X:\\ form); an app id as given."""
+    import re
+    if "!" in (path or "") and not re.search(r"[\\/:]", path):
+        return path
+    final = os.path.realpath(os.path.normpath(path.replace("/", "\\")), strict=True)
+    if final.startswith("\\\\?\\") and final[5:6] == ":":
+        final = final[4:]
+    return final
 
 
 def is_run_dialog(hwnd: int, exe: str, cls: str) -> bool:

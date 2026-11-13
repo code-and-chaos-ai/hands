@@ -150,7 +150,8 @@ class Hands:
             if not found_exe:
                 raise HandsError(f"{path!r} isn't on this machine's PATH; give its full path or the app's name.")
             path = os.path.abspath(found_exe)
-        policy.check_launch_target(path)  # the resolved target, before anything starts
+        # from here on, ONLY the path the check judged: consent, the launch and the window match all use it
+        path = policy.check_launch_target(path)
         exe_hint = os.path.basename(path).lower() if path.lower().endswith(".exe") else ""
         aumid = path if "!" in path else ""
         if not aumid and not exe_hint:
