@@ -58,8 +58,9 @@ def check_launch_target(path: str) -> None:
     ext = os.path.splitext(low)[1]
     if ext in SCRIPT_EXT:
         raise Denied(f"I never launch {ext} files: that runs code instead of opening an app.")
-    if (path or "").startswith(("\\\\", "//")):
-        raise Denied("I never launch from a network path: copy the program locally and ask the person.")
+    why = local_path_problem(path)  # an app id has no drive, share, scheme or stream, so it always passes
+    if why:
+        raise Denied(f"I never launch from {why}: only programs on this machine's own drives.")
     hit = _denied_exe(path)
     if hit:
         raise Denied(f"I never launch {hit}: hard deny list.")
@@ -100,17 +101,40 @@ def consent_key(exe: str, app: str) -> str:
     if not os.path.isabs(path):
         return os.path.basename(path).lower()
     norm = os.path.normcase(os.path.abspath(path))
-    parts = norm.split(os.sep)
-    if "windowsapps" in parts:
-        i = parts.index("windowsapps")
-        if i + 1 < len(parts):
-            pkg = parts[i + 1].split("_")
-            if len(pkg) >= 2:
-                return f"pkg:{pkg[0]}__{pkg[-1]}"
+    # the package identity only under the REAL, protected package root: any other folder named WindowsApps is
+    # just a folder, and its files are keyed by their full path like everything else
+    root = os.path.normcase(os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "WindowsApps")) + os.sep
+    if norm.startswith(root):
+        pkg = norm[len(root):].split(os.sep, 1)[0].split("_")
+        if len(pkg) >= 2 and pkg[0] and pkg[-1]:
+            return f"pkg:{pkg[0]}__{pkg[-1]}"
     return norm
 
 
-_ORIG_CACHE: dict[str, str] = {}
+def local_path_problem(path: str) -> str | None:
+    """Why a launch path isn't a plain local file path, or None. Checked on the normalised spelling, before any
+    filesystem call: network shares (any \\\\ form, device paths included), URLs, alternate data streams, and drive
+    letters Windows reports as network drives."""
+    p = os.path.normpath((path or "").replace("/", "\\"))
+    low = p.lower()
+    if low.startswith("\\\\") or os.path.splitdrive(p)[0].startswith("\\\\"):
+        return "a network or device path"
+    if low.startswith("file:") or "://" in low:
+        return "a URL"
+    if ":" in p[2:]:
+        return "an alternate data stream"
+    drive = os.path.splitdrive(p)[0]
+    if drive:
+        try:
+            import win32file
+            if win32file.GetDriveType(drive + "\\") == 4:  # DRIVE_REMOTE
+                return "a network drive"
+        except Exception:
+            return "a drive whose type can't be read"
+    return None
+
+
+_ORIG_CACHE: dict[tuple, str] = {}
 
 
 def original_name(exe: str) -> str:
@@ -118,7 +142,12 @@ def original_name(exe: str) -> str:
     copy of cmd.exe still says it is cmd.exe. Empty when the file has none or can't be read."""
     if not exe or not os.path.isfile(exe):
         return ""
-    key = os.path.normcase(os.path.abspath(exe))
+    try:
+        st = os.stat(exe)
+    except OSError:
+        return ""
+    # the cache is per file VERSION: a file swapped under the same path is read again
+    key = (os.path.normcase(os.path.abspath(exe)), st.st_mtime_ns, st.st_size, st.st_ino)
     if key in _ORIG_CACHE:
         return _ORIG_CACHE[key]
     name = ""
@@ -131,7 +160,8 @@ def original_name(exe: str) -> str:
     name = name.strip().lower()
     if name.endswith(".mui"):
         name = name[:-4]
-    _ORIG_CACHE[key] = name
+    if name:  # a failed read is never remembered
+        _ORIG_CACHE[key] = name
     return name
 
 

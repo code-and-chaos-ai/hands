@@ -142,6 +142,14 @@ class Hands:
             if not hits:
                 raise HandsError(f"No installed app matches {target!r}.")
             path = hits[0]["id"]
+        if "!" not in path and path.lower().endswith(".exe") and not os.path.isabs(path):
+            # a bare name like "foo.exe" would be found by the shell somewhere on PATH: resolve it to ONE absolute
+            # file here, so the deny check, the consent key and the launch all see the same program
+            import shutil
+            found_exe = shutil.which(path)
+            if not found_exe:
+                raise HandsError(f"{path!r} isn't on this machine's PATH; give its full path or the app's name.")
+            path = os.path.abspath(found_exe)
         policy.check_launch_target(path)  # the resolved target, before anything starts
         exe_hint = os.path.basename(path).lower() if path.lower().endswith(".exe") else ""
         aumid = path if "!" in path else ""

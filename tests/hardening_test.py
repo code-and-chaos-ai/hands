@@ -142,7 +142,47 @@ try:
     hd6.append(True)  # an ordinary program still launches
 except Exception:
     hd6.append(False)
+# (round 2 of the review) a fake WindowsApps folder gets no package identity; every network spelling, a URL and an
+# alternate data stream are refused; a swapped file is re-read, never served from the cache
+fake_pkg = tmp / "WindowsApps" / "Microsoft.WindowsNotepad_1.0.0.0_x64__8wekyb3d8bbwe"
+fake_pkg.mkdir(parents=True)
+hd6.append(policy.consent_key(str(fake_pkg / "Notepad.exe"), "").startswith("pkg:") is False)
+for bad in ("\\/server/share/t.exe", "/\\server\\share\\t.exe", "\\\\?\\UNC\\server\\share\\t.exe",
+            "\\\\?\\C:\\Windows\\System32\\notepad.exe", "file:///C:/Windows/System32/notepad.exe",
+            "C:\\Windows\\System32\\notepad.exe:evil.exe"):
+    try:
+        policy.check_launch_target(bad)
+        hd6.append(False)
+    except Exception as e:
+        hd6.append(type(e).__name__ == "Denied")
+swap = tmp / "swap.exe"
+_sh.copy2(os.path.join(os.environ["WINDIR"], "System32", "notepad.exe"), swap)
+first = policy.original_name(str(swap))
+import time as _t
+_t.sleep(0.05)
+_sh.copy2(os.path.join(os.environ["WINDIR"], "System32", "cmd.exe"), swap)
+os.utime(swap, None)
+hd6.append(first == "notepad.exe" and policy.original_name(str(swap)) == "cmd.exe")
 res["HD6"] = all(hd6)
+
+# HD8: a bare "name.exe" is resolved to ONE absolute file before the deny check, consent and launch
+from engine import session as _s8
+calls = []
+H8 = _s8.Hands(overlay=False)
+orig8 = (_s8.policy.check_launch_target, _s8.gate_consent)
+_s8.policy.check_launch_target = lambda p: (calls.append(("check", p)), (_ for _ in ()).throw(policy.Denied("stop")))[0]
+try:
+    H8.launch("notepad.exe")
+except Exception:
+    pass
+try:
+    H8.launch("definitely-not-on-path-1234.exe")
+    unresolved_refused = False
+except Exception as e:
+    unresolved_refused = "isn't on this machine's PATH" in str(e)
+_s8.policy.check_launch_target, _s8.gate_consent = orig8
+res["HD8"] = (bool(calls) and os.path.isabs(calls[0][1]) and calls[0][1].lower().endswith("notepad.exe")
+              and unresolved_refused)
 
 # HD7: real input never goes to a blocking dialog that failed the deny list / consent (it's the person's)
 from engine import session as _s
