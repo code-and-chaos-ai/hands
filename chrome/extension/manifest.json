@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Hands",
+  "short_name": "Hands",
+  "version": "0.2.0",
+  "description": "Hands in Chrome: the agent's background tabs in its own tab group, driven through the debugger, with its own cursor.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtM6bt6OTcKKcV/wf43STbit+JyuAg9jWT8pcpyQ6jnxb5ZDUT9Mq1qHNN4VZ8qGB3HbMZVNhmeFef8z1b4lsWqIai2vpUxUc2yPBpTXlSE2luPv943Lv7AQ5IpWcnMpwXqvXrTu6uCN7Js06vlQWWZhcKoV/pn9Hsq5xdMTb2rahz9cMLnkkxcUTDOTR+t5aWosfdpjcxL3jYaDTWi/1vQr5h+r3Zl76l5Josfba3YxMEu37qr4msGNO8Vz9MWGIKDOPUR7EBYXwxF6Eg+EO8WbEOI0fSbEN+GRq5Qfsp/xC4h5HbdbQ1lUqgnDcY51q498AJp9XRv222dLtM8Lj1wIDAQAB",
+  "minimum_chrome_version": "125",
+  "permissions": ["debugger", "tabs", "tabGroups", "scripting", "nativeMessaging", "storage", "alarms", "webNavigation"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "sw.js" },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": { "default_title": "Hands", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } }
+}
