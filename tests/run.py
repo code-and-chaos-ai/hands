@@ -23,7 +23,7 @@ SUITE = [  # (label, file, timeout s)
     ("hardening(HD1-HD10)", "hardening_test.py", 60),
     ("bouncer(BC1-BC22)", "bouncer_test.py", 120),
     ("bouncer_door(BD1-BD6)", "bouncer_door_test.py", 180),
-    ("browser(K-W,J1-J6,E1-E5)", "browser_test.py", 900),
+    ("browser(K-W,J1-J7,E1-E5)", "browser_test.py", 900),
 ]
 
 

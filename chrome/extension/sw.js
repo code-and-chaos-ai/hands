@@ -109,6 +109,11 @@ async function handle(msg) {
     const params = msg.params && typeof msg.params === "object" && !Array.isArray(msg.params) ? { ...msg.params } : {};
     params.__owner = `${hostId}:${Number.isInteger(msg.client) ? msg.client : "?"}`;   // set here, never by a client
     await load();
+    // a joined / reclaimed tab answers only the session the person said yes to (house + session id), for every call
+    const jm = Number.isSafeInteger(params.tabId) ? S.mine[String(params.tabId)] : null;
+    if (jm && jm.mode && msg.method !== "tabs.get" && String(params.grantee || "") !== jm.grantee) {
+      throw E("not_mine", `tab ${params.tabId} was joined or reclaimed for another session; its yes isn't this session's`);
+    }
     reply = { id: msg.id, result: await fn(params) };
   } catch (e) {
     reply = { id: msg.id, error: { code: e.code || "error", message: String(e.message || e).slice(0, 600) } };
@@ -879,13 +884,14 @@ const METHODS = {
   // The engine has already gated the tab's current URL and shown the person the card.
   async "tabs.join"(params) {
     const tabId = int(params.tabId, "tab");
+    if (typeof params.grantee !== "string" || !params.grantee) throw E("bad", "grantee: the asking session's identity");
     const t = await getTab(tabId);
     if (S.mine[String(tabId)]) throw E("bad", `tab ${tabId} is already one I'm in`);
     if ((S.handed || {})[String(tabId)]) throw E("bad", `tab ${tabId} is one I opened and handed over: reclaim it instead`);
     const url = t.url || t.pendingUrl || "";
     guardUrl(url);
     if (!navAllowed(url)) throw E("denied", "that tab is on a page I never touch");
-    S.mine[String(tabId)] = { session: String(params.session || "rowan").slice(0, 24), keep: true, mode: "joined",
+    S.mine[String(tabId)] = { grantee: String(params.grantee || "").slice(0, 120), session: String(params.session || "rowan").slice(0, 24), keep: true, mode: "joined",
                               owner: live[params.__owner] || "unknown", root: tabId };
     await save();
     return tabBrief(await chrome.tabs.get(tabId));
@@ -895,6 +901,7 @@ const METHODS = {
   // mine = the handed-over set, never a URL.
   async "tabs.reclaim"(params) {
     const tabId = int(params.tabId, "tab");
+    if (typeof params.grantee !== "string" || !params.grantee) throw E("bad", "grantee: the asking session's identity");
     const t = await getTab(tabId);
     if (S.mine[String(tabId)]) throw E("bad", `tab ${tabId} is already one I'm in`);
     if (!(S.handed || {})[String(tabId)]) throw E("not_mine", `tab ${tabId} was never one I opened and handed over`);
@@ -903,7 +910,7 @@ const METHODS = {
     if (!navAllowed(url)) throw E("denied", "that tab is on a page I never touch");
     delete S.handed[String(tabId)];
     // keep: true, so at done it is handed back again, not closed, unless I close it on purpose
-    S.mine[String(tabId)] = { session: String(params.session || "rowan").slice(0, 24), keep: true, mode: "reclaimed",
+    S.mine[String(tabId)] = { grantee: String(params.grantee || "").slice(0, 120), session: String(params.session || "rowan").slice(0, 24), keep: true, mode: "reclaimed",
                               owner: live[params.__owner] || "unknown", root: tabId };
     await save();
     return tabBrief(await chrome.tabs.get(tabId));

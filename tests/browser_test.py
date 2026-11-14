@@ -1038,6 +1038,19 @@ async def main() -> int:
                 cres, _ = await call("browser_close", {"tab": hid})
                 row("J2", looked and cres.isError and "never close" in text_of(cres) and hid in await tabmap(),
                     f"look ok={looked}; close -> {text_of(cres).strip()[:90]!r}")
+                # J7: another session (its own HANDS_SESSION) can't use the yes given to this one: look and leave refused
+                params7 = StdioServerParameters(command=sys.executable, args=["-X", "utf8", os.path.join(ROOT, "mcp_server.py")],
+                                                env=dict(env, HANDS_SESSION="another-session-7",
+                                                         HANDS_BOUNCER_DIR=tempfile.mkdtemp(prefix="hands-bt-bouncer7-")))
+                async with stdio_client(params7) as (r7, w7):
+                    async with ClientSession(r7, w7) as s7:
+                        await s7.initialize()
+                        o_look = await s7.call_tool("browser_look", {"tab": hid, "screenshot": False})
+                        o_leave = await s7.call_tool("browser_leave", {"tab": hid})
+                still = (await tabmap()).get(hid, {}).get("joined")
+                row("J7", o_look.isError and o_leave.isError and "another session" in text_of(o_leave) and still,
+                    f"other session look -> {text_of(o_look).strip()[:60]!r}; leave -> {text_of(o_leave).strip()[:70]!r}; still joined={still}")
+
                 # J3: reclaim needs proof it was mine: the person's own tab and a forged id are refused; a handed-over
                 #     tab can't be JOINED (that's reclaim)
                 r_her, _ = await call("browser_reclaim", {"tab": hid})
@@ -1101,7 +1114,7 @@ async def main() -> int:
                             and not install_host._paths(test_host)[0].exists())
         print(f"teardown: chrome gone={gone}, temp profile removed={removed}, web dir removed={not os.path.exists(web)}, "
               f"own host key removed and the real registration untouched: {key_restored}")
-    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "J6", "E1", "E2", "E3", "E4", "E5"]
+    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "E1", "E2", "E3", "E4", "E5"]
     print("\nSUMMARY " + " ".join(f"{k}:{'PASS' if RESULTS.get(k, (False,))[0] else 'FAIL'}" for k in order))
     return 0 if all(RESULTS.get(k, (False,))[0] for k in order) else 1
 

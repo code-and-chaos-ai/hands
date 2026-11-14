@@ -313,7 +313,17 @@ class Browser:
             if ev.get("event") == "stopped":
                 self.h.stops.stop_all(str(ev.get("reason") or "browser use stopped")[:120])
 
+    @staticmethod
+    def _grantee() -> str:
+        """Who is asking, as the bouncer names a session: house + session id. A joined / reclaimed tab answers only
+        the session the person said yes to."""
+        from .bouncer import me_from_env
+        me = me_from_env()
+        return f"{me.house}:{me.id}"
+
     def _call(self, method: str, params: dict | None = None, **kw):
+        params = dict(params or {})
+        params.setdefault("grantee", self._grantee())
         try:
             return self.pipe.call(method, params, **kw)
         except BrowserStopped as e:
