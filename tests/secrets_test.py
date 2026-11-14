@@ -3,7 +3,8 @@ SC1: the shared matcher catches every fake secret type and leaves ordinary text,
 SC2: a window holding fake secrets: none of them appears in the look's text, the header counts them, and the
      screenshot is blacked out over the text box (the secret's element) but not over the title area's ordinary text.
 SC3: the same window with ordinary text only: no note, nothing blacked out.
-SC4: a fake secret in the window's TITLE is hidden in the header and blacked out in the caption strip only."""
+SC4: a fake secret in the window's TITLE is hidden in the header and blacked out in the caption strip only.
+SC5: a window with more elements than can all be checked gets no screenshot (failing closed)."""
 import io, os, subprocess, sys, time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -115,6 +116,15 @@ try:
                   and fill_share(im4, body) < 0.05)
     print(f"SC4: {'PASS' if res['SC4'] else 'FAIL'} — header={head4[:90]!r}; caption blacked {fill_share(im4, cap):.2f}; "
           f"body blacked {fill_share(im4, body):.2f}")
+    # SC5: a window with more elements than can all be checked gets no screenshot (failing closed), with a note
+    real_cap = session.SCAN_CAP
+    session.SCAN_CAP = 3
+    try:
+        txt5, imgs5 = H.look(sid, shot=True)
+    finally:
+        session.SCAN_CAP = real_cap
+    res["SC5"] = not imgs5 and "withheld" in txt5 and "too many to check" in txt5
+    print(f"SC5: {'PASS' if res['SC5'] else 'FAIL'} — images={len(imgs5)}; note={[l for l in txt5.splitlines() if 'withheld' in l][:1]}")
 finally:
     os.environ.pop("HANDS_SCRATCH_TITLE", None)
     H.done()
@@ -123,4 +133,4 @@ finally:
 left = [w.title for w in win.top_windows() if os.path.basename(w.exe).lower() == "hands_scratch.exe"]
 print("   scratch windows left behind:", left)
 print("SUMMARY " + " ".join(f"{k}:{'PASS' if v else 'FAIL'}" for k, v in res.items()))
-sys.exit(0 if len(res) == 4 and all(res.values()) and not left else 1)
+sys.exit(0 if len(res) == 5 and all(res.values()) and not left else 1)

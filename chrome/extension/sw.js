@@ -1052,6 +1052,7 @@ const METHODS2 = {
     const pats = secretPatterns(secrets);
     const secretNodes = [], hidden = new Set();
     let scanned = 0, unchecked = 0;
+    const uncheckedIds = new Set();   // approved frames whose text I could not check: covered on the screenshot
     for (const f of ft.list) {
       const fr = { id: f.id, url: f.url, parent: f.parent };
       if (f.parent) {
@@ -1059,7 +1060,7 @@ const METHODS2 = {
         catch (e) { if (e.code === "stopped") throw e; }
       }
       if (approved[f.id] !== f.url) fr.skipped = true;
-      else if (f.remote) { fr.error = "another process; open it as its own tab to read it"; unchecked++; }
+      else if (f.remote) { fr.error = "another process; open it as its own tab to read it"; unchecked++; uncheckedIds.add(f.id); }
       else if ((tree || (screenshot && pats.length)) && scanned < MAX_FRAMES) {
         try {
           const { nodes } = await cdp(tabId, "Accessibility.getFullAXTree", { frameId: f.id });
@@ -1091,8 +1092,9 @@ const METHODS2 = {
           if (e.code === "stopped") throw e;
           fr.error = /frame|not found|no.*node/i.test(e.message) ? "cross-origin frame in another process" : e.message.slice(0, 120);
           unchecked++;
+          uncheckedIds.add(f.id);
         }
-      } else if (pats.length) unchecked++;
+      } else if (pats.length) { unchecked++; uncheckedIds.add(f.id); }
       out.frames.push(fr);
     }
     if (pats.length) { out.secrets_hidden = hidden.size; out.secret_frames_unchecked = unchecked; }
@@ -1107,7 +1109,9 @@ const METHODS2 = {
         const ft0 = await frameTree(tabId);
         if (ft0.incomplete) throw E("cover", "I couldn't list the frames inside a cross-site frame");
         const c0 = changes[tabId] || 0;
+        // frames I may not read, plus (when hiding secrets) approved frames whose text I could not check
         const cover = framesToCover(ft0, approved);
+        if (pats.length) for (const f of ft0.list) if (uncheckedIds.has(f.id) && !cover.includes(f)) cover.push(f);
         const paint = cover.length || secretNodes.length;
         const sc = paint ? await shotScale(tabId, ft0) : null;
         const b0 = cover.length ? await frameBoxes(tabId, ft0, cover) : { rects: [], notRendered: 0 };

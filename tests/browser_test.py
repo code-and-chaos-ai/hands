@@ -76,6 +76,9 @@ SECRETS_PAGE = """<!doctype html><meta charset=utf-8><title>keys {ghp}</title>
 <div style="height:40px"><input aria-label="token" style="font:20px monospace;width:600px" value="{ghp}"></div>
 <p style="margin-top:260px">Plain words stay readable</p></body>""".replace("{ghp}", FAKE_GHP).replace("{ant}", FAKE_ANT).replace("{aws}", FAKE_AWS)
 FAKE_SECRETS = ["npg_Zx9Qw4Lm2Rt8Yv5Kp", FAKE_ANT, FAKE_AWS, FAKE_GHP]
+# an allowed page from another site in a frame (another process: its text can't be checked here)
+XSITE = """<!doctype html><meta charset=utf-8><title>Cross-site</title><h1>Cross-site frame</h1>
+<iframe src="http://127.0.0.3:{pc}/inner.html" width=400 height=160 style="border:0"></iframe>"""
 INNER = """<!doctype html><meta charset=utf-8><title>inner</title><style>html,body{margin:0;background:#ff00ff}</style><button id=ib onclick="window.hit=1">Inner button</button>
 <input id=ii aria-label="Inner field">"""
 FRAMES = """<!doctype html><meta charset=utf-8><title>Frames</title><h1>Frames page</h1>
@@ -210,7 +213,8 @@ async def main() -> int:
                  "blank.html": BLANK, "jb.html": JB, "jack.html": JACK.replace("{pb}", str(pb)),
                  "nav.html": NAVP.replace("{pa}", str(pa)), "shadow.html": SHADOW.replace("{pb}", str(pb)),
                  "vlink.html": VLINK.replace("{pa}", str(pa)), "vsw.js": VSW, "swreg.html": SWREG,
-                 "jackl.html": JACKL.replace("{pb}", str(pb)), "secrets.html": SECRETS_PAGE}
+                 "jackl.html": JACKL.replace("{pb}", str(pb)), "secrets.html": SECRETS_PAGE,
+                 "xsite.html": XSITE.replace("{pc}", str(pc))}
         for name, body in files.items():
             with open(os.path.join(web, name), "w", encoding="utf-8") as f:
                 f.write(body)
@@ -1145,6 +1149,24 @@ async def main() -> int:
                     and not any(s in text_of(res) for s in FAKE_SECRETS),
                     f"find on the page -> {text_of(res).strip().splitlines()[-1][:60]!r}")
                 await call("browser_close", {"tab": stab})
+                # S4: an ALLOWED frame from another site runs in another process, so its text can't be checked for
+                #     secrets: it is covered on the screenshot (never shown unchecked), and the header says so
+                res, _ = await call("browser_open", {"url": f"{A}/xsite.html", "session": "test"})
+                xtab = json.loads(text_of(res))["id"]
+                await asyncio.sleep(1.0)
+                res, _ = await call("browser_look", {"tab": xtab, "screenshot": True})
+                xtxt = text_of(res)
+                ximgs = [c for c in res.content if c.type == "image"]
+                pink = 0
+                if ximgs:
+                    xim = PILImage.open(io.BytesIO(base64.b64decode(ximgs[0].data))).convert("RGB")
+                    xp = xim.load()
+                    pink = sum(1 for y in range(0, xim.height, 3) for x in range(0, xim.width, 3)
+                               if xp[x, y][0] > 220 and xp[x, y][1] < 60 and xp[x, y][2] > 220)
+                row("S4", "not checked for secrets" in xtxt and (not ximgs or pink == 0),
+                    f"note={[l for l in xtxt.splitlines() if 'not checked' in l or 'covered' in l][:2]}; "
+                    f"screenshot={bool(ximgs)}; magenta pixels showing={pink}")
+                await call("browser_close", {"tab": xtab})
                 await call("hands_done", {})
         probe.close()
     except Exception as e:
@@ -1170,7 +1192,7 @@ async def main() -> int:
                             and not install_host._paths(test_host)[0].exists())
         print(f"teardown: chrome gone={gone}, temp profile removed={removed}, web dir removed={not os.path.exists(web)}, "
               f"own host key removed and the real registration untouched: {key_restored}")
-    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "S1", "S2", "S3", "E1", "E2", "E3", "E4", "E5"]
+    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "S1", "S2", "S3", "S4", "E1", "E2", "E3", "E4", "E5"]
     print("\nSUMMARY " + " ".join(f"{k}:{'PASS' if RESULTS.get(k, (False,))[0] else 'FAIL'}" for k in order))
     return 0 if all(RESULTS.get(k, (False,))[0] for k in order) else 1
 

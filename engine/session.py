@@ -17,6 +17,7 @@ from .common import (TEXT_CAP, HandsError, NeedsConsent, Stopped, Stops, check_a
                      close_with_look, gate_consent, test_hooks)
 from .overlay_link import OverlayLink
 
+SCAN_CAP = 5000  # elements read to check a screenshot for secrets; a window with more gets no screenshot
 IDLE_NEEDED_MS = 700
 IDLE_WAIT_S = 8.0
 ALIASES = {"calc": "calculator", "notepad": "notepad", "explorer": "file explorer", "settings": "settings",
@@ -291,7 +292,13 @@ class Hands:
         notes = []
         pops = self._popups(hwnd)
         shots = []  # (window, image, its screen origin): encoded only after the secrets on it are blacked out
+        before: dict[int, list] = {}
         if shot:
+            # the windows' text is read before AND after the capture: a secret in either is blacked out, so text that
+            # changes while the picture is taken can't slip past
+            for h in (hwnd, *pops):
+                before[h] = self.tree.snapshot(h, (fl, ft), max_nodes=SCAN_CAP)
+            self._hide_secrets([n for g in before.values() for n in g])
             img = win.capture(hwnd)
             if win.is_blank(img):
                 notes.append("screenshot came back blank (GPU surface or protected content)")
@@ -303,10 +310,11 @@ class Hands:
         text = ""
         groups: dict[int, list] = {}
         if show_tree or find or shot:  # a screenshot is checked for secrets through the window's own text
-            nodes = self.tree.snapshot(hwnd, (fl, ft))
+            cap = SCAN_CAP if shot else 1500
+            nodes = self.tree.snapshot(hwnd, (fl, ft), max_nodes=cap)
             groups[hwnd] = list(nodes)
             for ph in pops:
-                more = self.tree.snapshot(ph, (fl, ft))
+                more = self.tree.snapshot(ph, (fl, ft), max_nodes=cap)
                 groups[ph] = more
                 for n in more:
                     n.index = len(nodes)
@@ -315,9 +323,14 @@ class Hands:
         if hidden:
             notes.append(f"secrets: {hidden} hidden (in the text as {secretscan.HIDDEN}, blacked out on the "
                          f"screenshot); never guess what is under them")
-        if shot:
+        unchecked = shot and any(len(g) >= SCAN_CAP for g in [*groups.values(), *before.values()])
+        if unchecked:  # too much text to check every element: no picture (failing closed)
+            shots = []
+            notes.append(f"no screenshot: withheld: over {SCAN_CAP} elements, too many to check every one for "
+                         f"secrets; use the tree (or find) instead")
+        if shots:
             for i, (h, img, origin) in enumerate(shots):
-                self._black_out(img, origin, groups.get(h, []))
+                self._black_out(img, origin, groups.get(h, []) + before.get(h, []))
                 data, sc = win.to_jpeg(img)
                 images.append(data)
                 if i == 0:
