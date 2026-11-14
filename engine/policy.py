@@ -8,6 +8,9 @@ from pathlib import Path
 
 STATE = Path(__file__).resolve().parent.parent / "state"
 CONSENT_FILE = STATE / "consent.json"
+# test-only: a test reads and writes its own copy of the consent list, never the person's (needs HANDS_TEST_HOOKS=1)
+if os.environ.get("HANDS_TEST_HOOKS") == "1" and os.environ.get("HANDS_TEST_CONSENT_FILE"):
+    CONSENT_FILE = Path(os.environ["HANDS_TEST_CONSENT_FILE"])
 
 # exe basenames (lowercase) I never drive or launch
 DENY_EXES = {

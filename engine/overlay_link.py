@@ -103,6 +103,12 @@ class OverlayLink:
         if self.ensure():
             self._send({"op": "target", "hwnd": hwnd, "label": label})
 
+    def awake(self) -> None:
+        """The person sees the agent is working: the whole-screen glow comes on, whatever it works in (a desktop window,
+        a background Chrome tab, a look at the whole screen). It stays until idle()."""
+        if self.ensure():
+            self._send({"op": "awake"})
+
     def mode(self, fg: bool) -> None:
         self._send({"op": "mode", "fg": fg})
 

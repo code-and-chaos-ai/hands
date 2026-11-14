@@ -69,6 +69,23 @@ async def _gate(purpose: str) -> None:
     if not ok:
         from engine.common import HandsError
         raise HandsError(why)
+    _glow_on()
+
+
+def _glow_on() -> None:
+    """Every move I make with the hands lights the whole-screen glow, so the person always knows I'm working, even in a
+    background tab she can't see. It goes off at hands_done, or when the hands go back for silence or her Stop."""
+    h = _state.get("hands")
+    if h is not None and h.use_overlay:
+        _state["glow"] = True
+        POOL.submit(h.ov.awake)
+
+
+def _glow_off() -> None:
+    # through the one-worker POOL, like _glow_on: an "on" still queued can never land after this "off"
+    h = _state.get("hands")
+    if _state.pop("glow", False) and h is not None:
+        POOL.submit(lambda: h.ov.alive and h.ov.idle())
 
 
 async def _run(fn, *a, free: bool = False, purpose: str = "", **k):
@@ -286,6 +303,7 @@ async def hands_done(keep_windows: list[int] | None = None) -> str:
                                 f"closed my tabs {b.get('closed', [])}, left open for the person {b.get('kept', [])}"))
     if await asyncio.to_thread(lambda: _bouncer().release()):
         res += "; handed the hands back"
+    _state.pop("glow", None)  # done() already took the glow off the screen
     _log("done", {}, True, 0, json.dumps(b or {}))
     return res
 
@@ -419,6 +437,9 @@ def _sweeper() -> None:
             try:
                 _bouncer().sweep()
                 POOL.submit(her_stop_check)
+                # the hands went back (silence, her Stop, another session): my glow goes with them
+                if _state.get("glow") and not _bouncer()._is_me(_bouncer().status().get("holder")):
+                    _glow_off()
             except Exception:
                 pass
     threading.Thread(target=loop, name="bouncer-sweep", daemon=True).start()

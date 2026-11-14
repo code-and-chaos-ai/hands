@@ -221,6 +221,7 @@ class App
         if (!timer.Enabled) timer.Start();
         if (op == "target") { target = new IntPtr(L(m, "hwnd")); string lb = S(m, "label"); if (lb != "") label = lb; active = true; }
         else if (op == "mode") { object v; fgMode = m.TryGetValue("fg", out v) && Convert.ToBoolean(v); }
+        else if (op == "awake") { active = true; } // working, in any window or none (a background tab, a screen look): the glow says so
         else if (op == "glide")
         {
             active = true;

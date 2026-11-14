@@ -31,6 +31,27 @@ os.environ["HANDS_TEST_HOOKS"] = "1"  # debug.* seams: honoured only on a non-de
 os.environ["HANDS_BOUNCER_DIR"] = tempfile.mkdtemp(prefix="hands-bt-bouncer-")  # never the live lease
 os.environ["HANDS_TEST_GRANT_SCOPE"] = "session"  # J7 tests the default, whatever the owner's config says
 
+
+def _test_consent_copy() -> str:
+    """The person's consent list, minus local sites (R proves a local site still asks): the test's own copy, so a yes
+    they gave is never removed and the test never depends on one."""
+    src = os.path.join(ROOT, "state", "consent.json")
+    data = {"always": []}
+    try:
+        with open(src, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        pass
+    local = ("site:localhost", "site:127.", "site:local")
+    data["always"] = [k for k in data.get("always", []) if not k.startswith(local)]
+    path = os.path.join(tempfile.mkdtemp(prefix="hands-bt-consent-"), "consent.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+    return path
+
+
+os.environ["HANDS_TEST_CONSENT_FILE"] = _test_consent_copy()
+
 import win32api  # noqa: E402
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
