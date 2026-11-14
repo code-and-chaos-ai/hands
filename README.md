@@ -105,6 +105,8 @@ Everything is optional. `state\config.json`:
   `chrome_pipe` can be changed too, but the host name must then also be changed in `chrome\extension\sw.js`.
 - `notify_cmd`: run with one message argument whenever the host-app door (below) is used. With none configured,
   that door stays shut.
+- `grant_scope`: `"session"` (default) or `"agent"`. When the person lets the agent join or reclaim a tab, that
+  yes belongs to the asking session; with `"agent"` it covers every session of this agent on this machine.
 - `nudge_cmd`: run with one JSON argument `{"house", "id", "message"}` when the hands free for a waiting session.
   Route it to that session however your agent host receives messages.
 - Both commands must start with the full path of an existing `.exe` that is not a shell (`cmd.exe`, PowerShell,

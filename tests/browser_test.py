@@ -29,6 +29,7 @@ sys.path.insert(0, HERE)
 os.environ["HANDS_CHROME_PIPE"] = f"rowan-hands-chrome-test-{os.getpid()}"  # never the real pipe
 os.environ["HANDS_TEST_HOOKS"] = "1"  # debug.* seams: honoured only on a non-default pipe (see chrome\\host.py)
 os.environ["HANDS_BOUNCER_DIR"] = tempfile.mkdtemp(prefix="hands-bt-bouncer-")  # never the live lease
+os.environ["HANDS_TEST_GRANT_SCOPE"] = "session"  # J7 tests the default, whatever the owner's config says
 
 import win32api  # noqa: E402
 from mcp import ClientSession, StdioServerParameters  # noqa: E402

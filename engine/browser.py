@@ -318,6 +318,13 @@ class Browser:
         """Who is asking, as the bouncer names a session: house + session id. A joined / reclaimed tab answers only
         the session the person said yes to."""
         from .bouncer import me_from_env
+        from .identity import get as _identity, setting
+        scope = setting("grant_scope", "session")
+        if os.environ.get("HANDS_TEST_HOOKS") == "1" and os.environ.get("HANDS_TEST_GRANT_SCOPE"):
+            scope = os.environ["HANDS_TEST_GRANT_SCOPE"]  # tests pin their own scope, never the owner's config
+        if scope == "agent":
+            # the owner's choice: one yes covers every session of this agent on this machine
+            return f"agent:{_identity()['name']}"
         me = me_from_env()
         return f"{me.house}:{me.id}"
 
