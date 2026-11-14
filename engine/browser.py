@@ -389,7 +389,8 @@ class Browser:
     def _enter(self, kind: str, tab: int, session: str | None) -> dict:
         """JOIN (a tab the person opened) or RECLAIM (one I opened and handed over): the tab's CURRENT page passes the
         deny list and its site consent, then the person answers a card for THIS tab (Once or No: never remembered),
-        then the extension lets me in. Done lets go of a joined tab (never closed) and hands a reclaimed one back."""
+        then the extension lets me in. The yes lasts until the tab closes or I leave it (browser_leave): across turns
+        and hands_done, which only detaches the debugger."""
         from .identity import get as _identity
         with self.lock:
             self.h._check_stop("browser")
@@ -401,11 +402,26 @@ class Browser:
             self._gate_site(url)
             title = str(t.get("title") or "")[:60]
             what = "be in your tab with you" if kind == "join" else "take back the tab he handed you"
-            gate_consent(self.h, f"{kind}:{tab}", f"{title or policy.url_host(url)}",
-                         f"{_identity()['name']} wants to {what}: {url[:80]}")
-            name = "".join(ch for ch in str(session or _identity()["session"]) if ch.isprintable())[:24] or "rowan"
-            res = self._call(f"tabs.{kind}", {"tabId": tab, "session": name})
+            key = f"{kind}:{tab}"
+            try:
+                gate_consent(self.h, key, f"{title or policy.url_host(url)}",
+                             f"{_identity()['name']} wants to {what}: {url[:80]}")
+                name = "".join(ch for ch in str(session or _identity()["session"]) if ch.isprintable())[:24] or "rowan"
+                res = self._call(f"tabs.{kind}", {"tabId": tab, "session": name})
+            finally:
+                # the card's yes is spent on entering: what holds it from here is the joined/reclaimed tab itself
+                # (until the tab closes or I leave). Coming back after a leave asks again.
+                self.h.consent.session.discard(key)
             self.opened.add(tab)  # done lets go of it (joined) or hands it back (reclaimed)
+            self.looks.pop(tab, None)
+            self.refmaps.pop(tab, None)
+            return res
+
+    def leave(self, tab: int) -> dict:
+        with self.lock:
+            tab = self._tab(tab)
+            res = self._call("tabs.leave", {"tabId": tab})
+            self.opened.discard(tab)
             self.looks.pop(tab, None)
             self.refmaps.pop(tab, None)
             return res

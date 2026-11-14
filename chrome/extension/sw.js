@@ -909,6 +909,23 @@ const METHODS = {
     return tabBrief(await chrome.tabs.get(tabId));
   },
 
+  // LEAVE: I step out of a tab I joined (it stays the person's, untouched) or reclaimed (handed back, reclaimable).
+  async "tabs.leave"(params) {
+    const tabId = int(params.tabId, "tab");
+    const m = S.mine[String(tabId)];
+    if (!m || (m.mode !== "joined" && m.mode !== "reclaimed")) throw E("bad", `tab ${tabId} isn't one I joined or reclaimed`);
+    if (attached.has(tabId)) {
+      await overlay(tabId, { hands: "bye" }).catch(() => {});
+      await new Promise((r) => chrome.debugger.detach({ tabId }, () => { void chrome.runtime.lastError; r(); }));
+      attached.delete(tabId);
+    }
+    if (m.mode === "reclaimed") (S.handed || (S.handed = {}))[String(tabId)] = true;
+    delete S.mine[String(tabId)];
+    delete stopped[tabId];
+    await save();
+    return { left: tabId, was: m.mode };
+  },
+
   async "tabs.close"({ tabId }) {
     mustBeMine(tabId);
     if (isJoined(tabId)) throw E("joined", `tab ${tabId} is the person's: I joined it, and I never close it`);
@@ -943,7 +960,8 @@ const METHODS = {
     live[__owner] = engine;
     await save();
     const connected = new Set(Object.values(live));
-    return { leftovers: Object.entries(S.mine).filter(([, v]) => !connected.has(v.owner)).map(([k, v]) => ({ tab: Number(k), owner: v.owner })) };
+    // joined / reclaimed tabs aren't leftovers: the person's yes outlives the engine that asked
+    return { leftovers: Object.entries(S.mine).filter(([, v]) => !connected.has(v.owner) && !v.mode).map(([k, v]) => ({ tab: Number(k), owner: v.owner })) };
   },
 
   // Release tabs of a dead engine (only while that engine is still not connected and still owns them).
@@ -979,8 +997,12 @@ async function release(ids) {
         await new Promise((r) => chrome.debugger.detach({ tabId: id }, () => { void chrome.runtime.lastError; r(); }));
         attached.delete(id);
       }
-      if (v.mode === "joined") { /* the person's tab: let go, nothing else */ }
-      else if (v.keep) { kept.push(id); (S.handed || (S.handed = {}))[k] = true; }   // handed over: reclaimable
+      if (v.mode === "joined" || v.mode === "reclaimed") {
+        // the person's yes lasts until the tab closes (or I leave it): only the debugger let go above
+        delete stopped[id];
+        continue;
+      }
+      if (v.keep) { kept.push(id); (S.handed || (S.handed = {}))[k] = true; }   // handed over: reclaimable
       else { try { await chrome.tabs.remove(id); closed.push(id); } catch (e) { /* already gone */ } }
       delete S.mine[k];
       delete stopped[id];

@@ -1046,25 +1046,36 @@ async def main() -> int:
                 row("J3", r_her.isError and r_fake.isError and j_kept.isError and "reclaim" in text_of(j_kept),
                     f"reclaim hers -> {text_of(r_her).strip()[:60]!r}; forged -> {text_of(r_fake).strip()[:40]!r}; "
                     f"join handed -> {text_of(j_kept).strip()[:60]!r}")
-                # J4: reclaim the tab I handed over: full hands again; at done it goes back to the person, not closed;
-                #     the joined tab is let go and left open
+                # J4: reclaim the tab I handed over; then hands_done. The person's yes lasts until the tab closes: after
+                #     done both tabs are still open, still joined / reclaimed, and a look works with no new card
                 m0 = await tabmap()
                 r_ok, _ = await call("browser_reclaim", {"tab": ktab})
-                m2 = await tabmap()
                 await call("hands_done", {})
                 await asyncio.sleep(0.3)
                 m3 = await tabmap()
-                row("J4", m0[ktab].get("reclaimable") and (not r_ok.isError) and m2[ktab]["mine"]
-                    and ktab in m3 and not m3[ktab]["mine"] and m3[ktab].get("reclaimable")
-                    and hid in m3 and not m3[hid].get("joined"),
-                    f"reclaimable before={m0[ktab].get('reclaimable')}; after reclaim mine={m2[ktab]['mine']}; after done: "
-                    f"kept open={ktab in m3}, reclaimable again={m3.get(ktab, {}).get('reclaimable')}, joined tab open={hid in m3} "
-                    f"and let go={not m3.get(hid, {}).get('joined')}")
-                # J5: a reclaimed tab can be closed on purpose (full hands)
-                await call("browser_reclaim", {"tab": ktab})
-                c5, _ = await call("browser_close", {"tab": ktab})
+                l_her, _ = await call("browser_look", {"tab": hid, "screenshot": False})
+                l_k, _ = await call("browser_look", {"tab": ktab, "screenshot": False})
+                row("J4", m0[ktab].get("reclaimable") and (not r_ok.isError)
+                    and ktab in m3 and m3[ktab]["mine"] and hid in m3 and m3[hid].get("joined")
+                    and not l_her.isError and not l_k.isError,
+                    f"after done: joined still={m3.get(hid, {}).get('joined')}, reclaimed still mine={m3.get(ktab, {}).get('mine')}; "
+                    f"looks with no new card: hers={not l_her.isError} reclaimed={not l_k.isError}")
+                # J5: leave steps out: the joined tab stays open and is the person's again; the reclaimed one is handed
+                #     back (reclaimable); coming back needs a new yes
+                lv1, _ = await call("browser_leave", {"tab": hid})
+                lv2, _ = await call("browser_leave", {"tab": ktab})
                 m5 = await tabmap()
-                row("J5", (not c5.isError) and ktab not in m5, f"close reclaimed -> {text_of(c5).strip()[:60]!r}; gone={ktab not in m5}")
+                after_look, _ = await call("browser_look", {"tab": hid, "screenshot": False})
+                row("J5", (not lv1.isError) and (not lv2.isError) and hid in m5 and not m5[hid].get("joined")
+                    and ktab in m5 and m5[ktab].get("reclaimable") and after_look.isError,
+                    f"leave -> {text_of(lv1).strip()[:40]!r} / {text_of(lv2).strip()[:40]!r}; her tab open & hers again="
+                    f"{hid in m5 and not m5[hid].get('joined')}; handed back reclaimable={m5.get(ktab, {}).get('reclaimable')}; "
+                    f"look after leave refused={after_look.isError}")
+                # J6: a reclaimed tab can be closed on purpose (full hands)
+                await call("browser_reclaim", {"tab": ktab})
+                c6, _ = await call("browser_close", {"tab": ktab})
+                m6 = await tabmap()
+                row("J6", (not c6.isError) and ktab not in m6, f"close reclaimed -> {text_of(c6).strip()[:60]!r}; gone={ktab not in m6}")
                 await call("hands_done", {})
         probe.close()
     except Exception as e:
@@ -1090,7 +1101,7 @@ async def main() -> int:
                             and not install_host._paths(test_host)[0].exists())
         print(f"teardown: chrome gone={gone}, temp profile removed={removed}, web dir removed={not os.path.exists(web)}, "
               f"own host key removed and the real registration untouched: {key_restored}")
-    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "E1", "E2", "E3", "E4", "E5"]
+    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "J6", "E1", "E2", "E3", "E4", "E5"]
     print("\nSUMMARY " + " ".join(f"{k}:{'PASS' if RESULTS.get(k, (False,))[0] else 'FAIL'}" for k in order))
     return 0 if all(RESULTS.get(k, (False,))[0] for k in order) else 1
 

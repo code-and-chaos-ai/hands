@@ -41,11 +41,14 @@ own tab group · `browser_look(tab)` (accessibility tree as `[ref]`, diffed afte
 at `hands_done`; all others close.
 
 Working in the same tab as the person:
-- `browser_join(tab)`: a tab THEY opened and want you in. They answer a card for that tab (once or no, never
-  remembered). Then look and act in it as usual. It stays theirs: you can't close it, their focus never moves, and
-  hands_done lets go of it and leaves it open. If it wanders to a page you may not touch, you step out of it.
+- `browser_join(tab)`: a tab THEY opened and want you in. They answer a card for that tab once; their yes lasts
+  until the tab closes or you leave it, across turns and hands_done (which only detaches). Look and act as usual.
+  It stays theirs: you can't close it and their focus never moves. If it wanders to a page you may not touch, you
+  step out of it (that ends the join).
 - `browser_reclaim(tab)`: a tab YOU opened and handed to them earlier (`browser_tabs` shows `reclaimable: true`).
-  Card too. Full hands again, closing included; at hands_done it goes back to them unless you closed it on purpose.
+  Card too; lasts the same way. Full hands again, closing included; hands_done never closes it.
+- `browser_leave(tab)`: step out of a joined tab (it stays theirs) or a reclaimed one (handed back, reclaimable).
+  Coming back asks them again.
 
 Whole screen: `hands_screen()` returns one screenshot of every monitor plus the window list (needs consent).
 

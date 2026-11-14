@@ -367,9 +367,10 @@ async def browser_act(tab: int, look: int, actions: list[dict],
 async def browser_join(tab: int, session: str = "") -> str:
     """Join a tab THE PERSON opened, to work in it with them (ids from browser_tabs). They answer a card for this
     tab (once or no, never remembered); its page must pass the deny list and site consent. Then browser_look /
-    browser_act work in it in the background: their mouse, keyboard and active tab stay theirs. A joined tab is
-    theirs: browser_close refuses it, hands_done lets go of it and leaves it open, and if it wanders to a page the
-    agent may not touch, the agent steps out without moving it."""
+    browser_act work in it in the background: their mouse, keyboard and active tab stay theirs. Their yes lasts
+    until the tab closes or the agent leaves it (browser_leave): no new card on later turns. A joined tab is theirs:
+    browser_close refuses it, hands_done leaves it open and joined, and if it wanders to a page the agent may not
+    touch, the agent steps out without moving it (that ends the join)."""
     res = await _browser_call("browser_join", {"tab": tab}, lambda b: b.join(tab, session or None))
     return json.dumps(res, ensure_ascii=False)
 
@@ -378,8 +379,17 @@ async def browser_join(tab: int, session: str = "") -> str:
 async def browser_reclaim(tab: int, session: str = "") -> str:
     """Reclaim a tab the agent opened earlier and handed to the person (browser_tabs shows reclaimable=true), to work
     in it again with full hands, closing included. They answer a card for it (once or no): it may have wandered
-    since. At hands_done it is handed back to them again, not closed, unless the agent closed it on purpose."""
+    since. Their yes lasts until the tab closes or the agent leaves it (browser_leave hands it back); hands_done
+    never closes it."""
     res = await _browser_call("browser_reclaim", {"tab": tab}, lambda b: b.reclaim(tab, session or None))
+    return json.dumps(res, ensure_ascii=False)
+
+
+@mcp.tool()
+async def browser_leave(tab: int) -> str:
+    """Step out of a tab the agent joined (it stays the person's, untouched) or reclaimed (handed back to them, and
+    reclaimable again). Coming back needs their yes again."""
+    res = await _browser_call("browser_leave", {"tab": tab}, lambda b: b.leave(tab))
     return json.dumps(res, ensure_ascii=False)
 
 

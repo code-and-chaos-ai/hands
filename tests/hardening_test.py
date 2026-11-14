@@ -252,6 +252,34 @@ policy.STATE, policy.CONSENT_FILE = orig_state9, orig_file9
 res["HD9"] = ("join:123" not in saved9 and "reclaim:456" not in saved9 and c9.allowed("join:123")
               and wild_off and wild_on)
 
+# HD10: a join/reclaim card's yes is spent on entering: it is never left in the session's consent (so after a leave,
+# coming back shows the card again), and it is spent even when the extension refuses
+from engine import browser as _b
+import threading as _th
+H10 = _s.Hands(overlay=False)
+b10 = _b.Browser.__new__(_b.Browser)
+b10.h, b10.lock, b10.opened, b10.looks, b10.refmaps = H10, _th.RLock(), set(), {}, {}
+calls10 = []
+def fake_call(method, params=None, **kw):
+    calls10.append(method)
+    if method == "tabs.get":
+        return {"url": "https://example.org/", "title": "x"}
+    if method == "tabs.join" and params.get("tabId") == 8:
+        raise _b.BrowserError("refused by the extension")
+    return {"id": params.get("tabId")}
+b10._call = fake_call
+b10._gate_site = lambda url, opening=False: None
+H10._check_stop = lambda surface: None
+hd10 = []
+for t10 in (7, 8):
+    H10.consent.session.add(f"join:{t10}")  # as if she had just answered the card "once"
+    try:
+        b10.join(t10)
+    except Exception:
+        pass
+    hd10.append(f"join:{t10}" not in H10.consent.session)
+res["HD10"] = all(hd10) and calls10.count("tabs.join") == 2
+
 for k, v in res.items():
     print(f"{k}: {'PASS' if v else 'FAIL'}")
 print("SUMMARY " + " ".join(f"{k}:{'PASS' if v else 'FAIL'}" for k, v in res.items()))
