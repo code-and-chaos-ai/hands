@@ -104,6 +104,23 @@ try:
     print(f"DJ3: {'PASS' if res['DJ3'] else 'FAIL'} — close button found={bool(close)}; by index -> {o_idx.strip()[:60]!r}; "
           f"by point -> {o_pt.strip()[:60]!r}; window menu -> {o_menu.strip()[:40]!r}; still open={win32gui.IsWindow(her)}")
 
+    # DJ7: a right click on her title bar (it opens the window menu, where Close lives) is refused, by point and index
+    H.look(her, shot=False)
+    lk = H.looks[her]
+    l, t, r, b = win.frame_rect(her)
+    cx, cy = (l + r) // 2, t + 12
+    bar = [n for n in lk.nodes if n.ctype == "TitleBar"]
+    o7p = H.act(her, [{"click": [(cx - lk.origin[0]) * lk.scale, (cy - lk.origin[1]) * lk.scale], "button": "right"}],
+                then="none", look_id=lk.id)[0]
+    H.look(her, shot=False)
+    lk = H.looks[her]
+    bar = [n for n in lk.nodes if n.ctype == "TitleBar"]
+    o7i = H.act(her, [{"click": bar[0].index, "button": "right"}], then="none", look_id=lk.id)[0] if bar else ""
+    res["DJ7"] = (win.hit_code(her, cx, cy) == 2 and "never close" in o7p and "never close" in o7i
+                  and win32gui.IsWindow(her) and not win.popups_of(her))
+    print(f"DJ7: {'PASS' if res['DJ7'] else 'FAIL'} — caption hit={win.hit_code(her, cx, cy)}; right click by point -> "
+          f"{o7p.strip()[:50]!r}; by index -> {o7i.strip()[:50]!r}")
+
     # DJ4: a window Hands launched: full hands, its Close closes it
     os.environ["HANDS_SCRATCH_TITLE"] = "Mine scratch DJ"
     mine = H.launch(EXE)["id"]
@@ -118,7 +135,14 @@ try:
     hc = closers(lk, her)
     covered = bool(hc) and win.root_at(*hc[0].center) != her
     o6 = H.act(her, [{"click": hc[0].index}], then="none", look_id=lk.id)[0] if hc else ""
-    res["DJ6"] = covered and "never close" in o6 and win32gui.IsWindow(her)
+    H.look(her, shot=False)
+    lk = H.looks[her]
+    hc = closers(lk, her)
+    sx, sy = hc[0].center
+    o6p = H.act(her, [{"click": [(sx - lk.origin[0]) * lk.scale, (sy - lk.origin[1]) * lk.scale]}], then="none",
+                look_id=lk.id)[0]
+    res["DJ6"] = covered and "never close" in o6 and "never close" in o6p and win32gui.IsWindow(her)
+    print(f"   DJ6 covered point click -> {o6p.strip()[:60]!r}")
     print(f"DJ6: {'PASS' if res['DJ6'] else 'FAIL'} — her Close covered by another window={covered}; by index -> {o6.strip()[:60]!r}; still open={win32gui.IsWindow(her)}")
     H.look(mine, shot=False)
     lk = H.looks[mine]
@@ -137,6 +161,12 @@ finally:
     for w in [w for w in win.top_windows() if os.path.basename(w.exe).lower() == "hands_scratch.exe"]:
         force_close(w.id)
 
+cm = session.closing_menu_item
+menu_ok = [cm("E&xit", ""), cm("Exit", ""), cm("Close window", ""), cm("יציאה", ""), cm("Quit...", ""),
+           cm("Something", "Alt+F4"), cm("Whatever", "Ctrl+W"), cm("Close tab\tCtrl+W", "")]
+menu_no = [cm("Save", "Ctrl+S"), cm("Close-up mode", ""), cm("Open", ""), cm("Exit fullscreen", "F11")]
+res["DJ8"] = all(menu_ok) and not any(menu_no)
+print(f"DJ8: {'PASS' if res['DJ8'] else 'FAIL'} — closing items flagged={menu_ok}; ordinary flagged={menu_no}")
 flag = {c: keys.closes(c) for c in ("alt+F4", "ctrl+F4", "ctrl+w", "ctrl+W", "ctrl+shift+w", "ctrl+q", "alt+space",
                                      "ctrl+s", "ctrl+a", "Return", "alt+f", "ctrl+z", "F4")}
 res["DJ5"] = all(flag[c] for c in ("alt+F4", "ctrl+F4", "ctrl+w", "ctrl+W", "ctrl+shift+w", "ctrl+q", "alt+space")) and \
@@ -145,4 +175,4 @@ print(f"DJ5: {'PASS' if res['DJ5'] else 'FAIL'} — {flag}")
 left = [w.title for w in win.top_windows() if os.path.basename(w.exe).lower() == "hands_scratch.exe"]
 print("   scratch windows left behind:", left)
 print("SUMMARY " + " ".join(f"{k}:{'PASS' if v else 'FAIL'}" for k, v in res.items()))
-sys.exit(0 if all(res.values()) and len(res) == 6 and not left else 1)
+sys.exit(0 if all(res.values()) and len(res) == 8 and not left else 1)

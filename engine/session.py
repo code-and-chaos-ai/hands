@@ -22,6 +22,24 @@ ALIASES = {"calc": "calculator", "notepad": "notepad", "explorer": "file explore
            "paint": "paint", "word": "word", "excel": "excel", "chrome": "google chrome"}
 
 
+CLOSING_NAMES = {"exit", "quit", "close", "close window", "close tab", "close all", "close all tabs", "exit app",
+                 "יציאה", "סגור", "סגירה", "סגור חלון", "סגירת חלון", "סגור כרטיסייה", "סגירת כרטיסייה"}
+
+
+def closing_menu_item(name: str, accel: str) -> bool:
+    """A menu item that closes the window, a document or the app: by its shortcut (any language), else by its name
+    (English and Hebrew; a trailing '...' or '&' mnemonic ignored)."""
+    a = accel.strip()
+    if a:
+        try:
+            if keys.closes(a):
+                return True
+        except Exception:
+            pass
+    nm = name.replace("&", "").split("\t")[0].strip().rstrip(".").strip().casefold()
+    return nm in CLOSING_NAMES
+
+
 @dataclass
 class Look:
     hwnd: int
@@ -439,6 +457,8 @@ class Hands:
         return auto.Control.CreateControlFromElement(n.el)
 
     # ---------------------------------------------------------------- the person's windows
+    # The close guard matches the known ways an action closes a window (keys, the caption's Close and window menu,
+    # closing menu items by shortcut or name). It guards the agent's own actions; it is not a sandbox around the app.
     def _is_hers(self, hwnd: int) -> bool:
         """A window I didn't open (nor a dialog owned by one I opened) is the person's. Once its app has their yes I
         am joined in it automatically: I look and act there, but I never close it."""
@@ -467,20 +487,36 @@ class Hands:
                 depth = m.depth
         return False
 
-    def _guard_node(self, w: win.Win, lk: Look, n: tree.Node, verb: str) -> None:
+    def _guard_node(self, w: win.Win, lk: Look, n: tree.Node, verb: str, button: str = "left") -> None:
         """Closing her window by an element: the title bar's Close (by its id, or because the window itself says its
         close button is there: any language, even with something in front of it) or its window menu. In her title
         bar only minimize and maximize stay open to me."""
         if not self._is_hers(w.id):
             return
-        if (n.ctype == "Button" and n.aid == "Close") or (self._in_title_bar(lk, n) and (
-                n.ctype in ("MenuBar", "MenuItem") or
-                (n.ctype == "Button" and win.hit_code(w.id, *n.center) not in (8, 9)))):
+        code = win.hit_code(w.id, *n.center)
+        in_bar = self._in_title_bar(lk, n)
+        if ((n.ctype == "Button" and n.aid == "Close") or code in (20, 3)  # wherever it sits: the close spot, the menu
+                or (in_bar and (n.ctype in ("MenuBar", "MenuItem") or button != "left"   # a right click opens the menu
+                                or (n.ctype == "Button" and code not in (8, 9))))):
             self._never_close(w, f"{verb} [{n.index}] {n.name[:30]!r}")
+        if n.ctype == "MenuItem":
+            accel = ""
+            try:
+                accel = str(auto.Control.CreateControlFromElement(n.el).AcceleratorKey or "")
+            except Exception:
+                pass
+            if closing_menu_item(n.name, accel):
+                self._never_close(w, f"{verb} [{n.index}] {n.name[:30]!r}")
 
-    def _guard_click(self, w: win.Win, x: int, y: int, count: int = 1) -> None:
-        if self._is_hers(w.id) and win.close_hit(x, y, count):
+    def _guard_click(self, w: win.Win, x: int, y: int, count: int = 1, button: str = "left") -> None:
+        if not self._is_hers(w.id):
+            return
+        # her window itself is asked too: whatever covers the point now, it is raised before a real click lands
+        if win.close_hit(x, y, count) or win.hit_code(w.id, x, y) in (20, 3):
             self._never_close(w, "that click")
+        # a right click on her caption (or its buttons) opens the window menu, where Close lives
+        if button != "left" and win.hit_code(w.id, x, y) in (2, 3, 8, 9, 20):
+            self._never_close(w, f"a {button} click on the title bar")
 
     # ---------------------------------------------------------------- one action
     def _do(self, w: win.Win, lk: Look, a: dict) -> tuple[str, bool]:
@@ -496,7 +532,7 @@ class Hands:
                 raise HandsError("button left|right|middle, count 1–3")
             if isinstance(target, int) and not isinstance(target, bool):
                 n = self._node(lk, target)
-                self._guard_node(w, lk, n, "clicking")
+                self._guard_node(w, lk, n, "clicking", button)
                 self._glide(*n.center, "click")
                 note = ""
                 if button == "left" and count == 1 and not a.get("real"):
@@ -505,10 +541,10 @@ class Hands:
                         return f"clicked [{n.index}] {n.name[:40]!r} via {how} (no cursor)", False
                     note = " — it has no clickable pattern, so real input"
                 x, y = self._node_pt(lk, w, n)
-                self._guard_click(w, x, y, count)
+                self._guard_click(w, x, y, count, button)
             else:
                 x, y = self._pt(lk, w, target)
-                self._guard_click(w, x, y, count=count)
+                self._guard_click(w, x, y, count, button)
                 self._glide(x, y, "click")
                 note = ""
             self._foreground(w, lambda: win.mouse_click(x, y, button, count), point=(x, y))

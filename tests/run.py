@@ -19,7 +19,7 @@ SUITE = [  # (label, file, timeout s)
     ("slice1(A,F,G,H,I)", "slice1_test.py", 300),
     ("policy(PW1-PW3)", "policy_test.py", 60),
     ("cleanup(CL0-CL2)", "cleanup_test.py", 120),
-    ("join_desktop(DJ1-DJ6)", "join_desktop_test.py", 120),
+    ("join_desktop(DJ1-DJ8)", "join_desktop_test.py", 120),
     ("identity(ID1-ID4)", "identity_test.py", 60),
     ("hardening(HD1-HD10)", "hardening_test.py", 60),
     ("bouncer(BC1-BC22)", "bouncer_test.py", 120),

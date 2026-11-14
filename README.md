@@ -31,8 +31,10 @@ window. You can always see what it is doing, and one keypress stops it.
   and reported, never discarded. A window that holds your documents is never treated as the agent's.
 - **Never closes your windows**: once you allow an app, the agent can look and act in your own windows of it, but
   closing them is refused: closing keys (alt+F4, ctrl+F4, ctrl+W, ctrl+Q, alt+space), the title bar's Close button
-  (found by asking the window itself, so it works in any language and even when something covers it) and its
-  window menu. Windows the agent opened keep its full hands.
+  (found by asking the window itself, so it works in any language and even when something covers it), a right click
+  on the title bar, the window menu, and menu items that close (by their shortcut, or named Exit / Quit / Close).
+  Windows the agent opened keep its full hands. This guards the agent's own actions; it is not a sandbox around
+  the app.
 - **One agent at a time**: several agent sessions can each run Hands; a lease (the "bouncer") lets one hold the
   hands, tells the others exactly who holds them, keeps a line, and nudges the next one when they free.
 - **Chrome in background tabs**: the agent opens its own tabs, in its own tab group, and drives them through the
