@@ -32,7 +32,9 @@ window. You can always see what it is doing, and one keypress stops it.
 - **Hides secrets from the agent**: in every look, text that matches a secret (database connection strings with a
   password, API keys and tokens from the common providers, JWTs, bearer tokens, private keys, labelled passwords)
   is replaced with `[secret hidden]` and its element is blacked out on the screenshot, in Chrome (using the page's
-  own text) and on the desktop (using each window's own accessibility text). Titles and URLs are scrubbed too. The
+  own text) and on the desktop (using each window's own accessibility text). The whole-screen look has no text to go
+  by, so it reads the pixels with Windows' built-in OCR first; if that check fails, the picture is withheld. Titles
+  and URLs are scrubbed too. The
   header says how many were hidden. The pattern list is `engine/secret_patterns.json`. It catches text the page or
   window exposes as text; a secret drawn as an image, on a canvas, or inside a frame Hands can't read is not caught.
 - **Never closes your windows**: once you allow an app, the agent can look and act in your own windows of it, but

@@ -773,11 +773,45 @@ class Hands:
             mon = s.monitors[0]  # the virtual desktop spanning every monitor
             g = s.grab(mon)
         img = Image.frombytes("RGB", g.size, g.rgb)
+        del g
+        titles = "; ".join(f"{w.id} {secretscan.hide(w.title)[0][:40]!r}" for w in win.top_windows()[:12])
+        head = (f"screen · {img.width}x{img.height} px across {len(s.monitors) - 1} monitor(s) · origin "
+                f"{mon['left']},{mon['top']}")
+        # no text tree for a whole screen: its secrets are found by reading the pixels (Windows' own OCR), and the
+        # picture is shown only after they are blacked out. If the check fails, nothing from the screen is shown.
+        try:
+            hidden = self._ocr_redact(img)
+        except Exception as e:
+            img.close()
+            return (head + f"\nno screenshot: withheld: the secret check failed ({type(e).__name__}); nothing from the "
+                           f"screen was shown\nwindows (front first): {titles}"), []
         data, scale = win.to_jpeg(img)
-        head = (f"screen · {g.size[0]}x{g.size[1]} px across {len(s.monitors) - 1} monitor(s) · origin "
-                f"{mon['left']},{mon['top']}{f' · image scale {scale:.3f}' if scale != 1 else ''}\n"
-                f"windows (front first): " + "; ".join(f"{w.id} {w.title[:40]!r}" for w in win.top_windows()[:12]))
+        img.close()
+        head += (f"{f' · image scale {scale:.3f}' if scale != 1 else ''}\n"
+                 + (f"secrets: {hidden} hidden (blacked out); never guess what is under them\n" if hidden else "")
+                 + f"windows (front first): {titles}")
         return head, [data]
+
+    _ocr = None  # (module, worker, patterns), started on the first whole-screen look and kept warm
+
+    def _ocr_redact(self, img) -> int:
+        """Black out every secret the OCR reads on this picture, in place. Returns how many were hidden."""
+        import numpy as np
+        from PIL import Image
+        if self._ocr is None:
+            from . import ocr_redact
+            Hands._ocr = (ocr_redact, ocr_redact.OcrWorker(), ocr_redact.load_patterns())
+        mod, worker, pats = self._ocr
+        rgb = np.array(img)  # a writable copy
+        gray = (rgb[..., 0].astype("uint16") * 77 + rgb[..., 1].astype("uint16") * 150
+                + rgb[..., 2].astype("uint16") * 29 >> 8).astype("uint8")
+        r = mod.analyze(gray, worker, pats, (1, 2), 6.0)
+        del gray
+        if r.boxes:
+            mod.apply_boxes(rgb, r.boxes)
+            img.paste(Image.fromarray(rgb))
+        del rgb
+        return r.count + r.random
 
     def _close_mine(self, keep: set[int]) -> tuple[list[str], list[str]]:
         """Close the windows I launched. One that answers with a save prompt has unsaved changes: I cancel the

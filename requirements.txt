@@ -4,3 +4,4 @@ comtypes==1.4.15
 pywin32==311
 mss==10.1.0
 Pillow==11.3.0
+numpy==1.25.2
