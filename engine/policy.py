@@ -215,10 +215,17 @@ class Consent:
             self.always = set()
 
     def allowed(self, key: str) -> bool:
-        return key in self.always or key in self.session
+        if key in self.always or key in self.session:
+            return True
+        # test-only: "join:*" / "reclaim:*" in HANDS_TEST_ALLOW, honoured only with HANDS_TEST_HOOKS=1
+        if key.startswith(("join:", "reclaim:")) and os.environ.get("HANDS_TEST_HOOKS") == "1":
+            return f"{key.split(':', 1)[0]}:*" in self.session
+        return False
 
     def grant(self, key: str, scope: str) -> None:
         with self.lock:
+            if key.startswith(("join:", "reclaim:")):
+                scope = "once" if scope == "always" else scope  # a tab of theirs is a fresh yes every time
             if scope == "always":
                 self.always.add(key)
                 from .bouncer import _atomic_write, log  # a fresh temp name: a planted link or folder can't block it

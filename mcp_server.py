@@ -364,8 +364,28 @@ async def browser_act(tab: int, look: int, actions: list[dict],
 
 
 @mcp.tool()
+async def browser_join(tab: int, session: str = "") -> str:
+    """Join a tab THE PERSON opened, to work in it with them (ids from browser_tabs). They answer a card for this
+    tab (once or no, never remembered); its page must pass the deny list and site consent. Then browser_look /
+    browser_act work in it in the background: their mouse, keyboard and active tab stay theirs. A joined tab is
+    theirs: browser_close refuses it, hands_done lets go of it and leaves it open, and if it wanders to a page the
+    agent may not touch, the agent steps out without moving it."""
+    res = await _browser_call("browser_join", {"tab": tab}, lambda b: b.join(tab, session or None))
+    return json.dumps(res, ensure_ascii=False)
+
+
+@mcp.tool()
+async def browser_reclaim(tab: int, session: str = "") -> str:
+    """Reclaim a tab the agent opened earlier and handed to the person (browser_tabs shows reclaimable=true), to work
+    in it again with full hands, closing included. They answer a card for it (once or no): it may have wandered
+    since. At hands_done it is handed back to them again, not closed, unless the agent closed it on purpose."""
+    res = await _browser_call("browser_reclaim", {"tab": tab}, lambda b: b.reclaim(tab, session or None))
+    return json.dumps(res, ensure_ascii=False)
+
+
+@mcp.tool()
 async def browser_close(tab: int) -> str:
-    """Close one of the agent's tabs now (never one of the person's)."""
+    """Close one of the agent's tabs now (never one of the person's, never a joined tab)."""
     res = await _browser_call("browser_close", {"tab": tab}, lambda b: b.close(tab))
     return json.dumps(res, ensure_ascii=False)
 

@@ -231,6 +231,27 @@ finally:
     _wg.IsWindowEnabled, _s.win.popups_of, H._popups, H._wait_her_idle = saved
 res["HD7"] = hd7
 
+# HD9: a join / reclaim card is never remembered ("Always" becomes once), and the test-only wildcard is dead without
+# HANDS_TEST_HOOKS=1
+orig_state9, orig_file9 = policy.STATE, policy.CONSENT_FILE
+policy.STATE, policy.CONSENT_FILE = tmp, tmp / "consent9.json"
+c9 = policy.Consent()
+c9.grant("join:123", "always")
+c9.grant("reclaim:456", "always")
+saved9 = json.loads(policy.CONSENT_FILE.read_text(encoding="utf-8"))["always"] if policy.CONSENT_FILE.exists() else []
+hooks9 = os.environ.pop("HANDS_TEST_HOOKS", None)
+c9.session.add("join:*")
+wild_off = not c9.allowed("join:999")
+os.environ["HANDS_TEST_HOOKS"] = "1"
+wild_on = c9.allowed("join:999")
+if hooks9 is None:
+    os.environ.pop("HANDS_TEST_HOOKS", None)
+else:
+    os.environ["HANDS_TEST_HOOKS"] = hooks9
+policy.STATE, policy.CONSENT_FILE = orig_state9, orig_file9
+res["HD9"] = ("join:123" not in saved9 and "reclaim:456" not in saved9 and c9.allowed("join:123")
+              and wild_off and wild_on)
+
 for k, v in res.items():
     print(f"{k}: {'PASS' if v else 'FAIL'}")
 print("SUMMARY " + " ".join(f"{k}:{'PASS' if v else 'FAIL'}" for k, v in res.items()))

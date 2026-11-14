@@ -234,7 +234,7 @@ async def main() -> int:
                     raise
                 time.sleep(0.3)
 
-        env = dict(os.environ, HANDS_TEST_ALLOW="site:127.0.0.1;site:127.0.0.3", HANDS_HEADLESS="1")
+        env = dict(os.environ, HANDS_TEST_ALLOW="site:127.0.0.1;site:127.0.0.3;join:*;reclaim:*", HANDS_HEADLESS="1")
         params = StdioServerParameters(command=sys.executable, args=["-X", "utf8", os.path.join(ROOT, "mcp_server.py")],
                                        env=env)
         async with stdio_client(params) as (r, w):
@@ -1017,6 +1017,55 @@ async def main() -> int:
                     and all(t["id"] in aft for t in hers9),
                     f"mine before {mine_before}; after: the person's tab kept={her['id'] in aft}, kept tab open={ktab in aft} "
                     f"(now the person's), others closed={tab not in aft and ftab not in aft}; {done_msg.strip()[:120]!r}")
+
+                # ---------------- J1-J5 (JOIN a tab the person opened, RECLAIM one I handed over)
+                async def tabmap():
+                    return {t["id"]: t for t in json.loads(text_of((await call("browser_tabs", {}))[0]))}
+                hid = her["id"]
+                # J1: join the person's tab: it becomes joined (never 'mine'), and which tab is active doesn't change
+                active_before = {i for i, t in (await tabmap()).items() if t["active"]}
+                res, _ = await call("browser_join", {"tab": hid})
+                m1 = await tabmap()
+                active_after = {i for i, t in m1.items() if t["active"]}
+                row("J1", (not res.isError) and m1[hid]["joined"] and not m1[hid]["mine"] and active_after == active_before,
+                    f"join -> {text_of(res).strip()[:80]!r}; joined={m1[hid].get('joined')} mine={m1[hid]['mine']} "
+                    f"active tabs unchanged={active_after == active_before}")
+                # J2: I can look in a joined tab, but closing it is refused
+                res, _ = await call("browser_look", {"tab": hid, "screenshot": False})
+                looked = not res.isError and "The person's own page" in text_of(res)
+                if not looked:
+                    print("   J2 look:", text_of(res).strip()[:200])
+                cres, _ = await call("browser_close", {"tab": hid})
+                row("J2", looked and cres.isError and "never close" in text_of(cres) and hid in await tabmap(),
+                    f"look ok={looked}; close -> {text_of(cres).strip()[:90]!r}")
+                # J3: reclaim needs proof it was mine: the person's own tab and a forged id are refused; a handed-over
+                #     tab can't be JOINED (that's reclaim)
+                r_her, _ = await call("browser_reclaim", {"tab": hid})
+                r_fake, _ = await call("browser_reclaim", {"tab": 2 ** 40})
+                j_kept, _ = await call("browser_join", {"tab": ktab})
+                row("J3", r_her.isError and r_fake.isError and j_kept.isError and "reclaim" in text_of(j_kept),
+                    f"reclaim hers -> {text_of(r_her).strip()[:60]!r}; forged -> {text_of(r_fake).strip()[:40]!r}; "
+                    f"join handed -> {text_of(j_kept).strip()[:60]!r}")
+                # J4: reclaim the tab I handed over: full hands again; at done it goes back to the person, not closed;
+                #     the joined tab is let go and left open
+                m0 = await tabmap()
+                r_ok, _ = await call("browser_reclaim", {"tab": ktab})
+                m2 = await tabmap()
+                await call("hands_done", {})
+                await asyncio.sleep(0.3)
+                m3 = await tabmap()
+                row("J4", m0[ktab].get("reclaimable") and (not r_ok.isError) and m2[ktab]["mine"]
+                    and ktab in m3 and not m3[ktab]["mine"] and m3[ktab].get("reclaimable")
+                    and hid in m3 and not m3[hid].get("joined"),
+                    f"reclaimable before={m0[ktab].get('reclaimable')}; after reclaim mine={m2[ktab]['mine']}; after done: "
+                    f"kept open={ktab in m3}, reclaimable again={m3.get(ktab, {}).get('reclaimable')}, joined tab open={hid in m3} "
+                    f"and let go={not m3.get(hid, {}).get('joined')}")
+                # J5: a reclaimed tab can be closed on purpose (full hands)
+                await call("browser_reclaim", {"tab": ktab})
+                c5, _ = await call("browser_close", {"tab": ktab})
+                m5 = await tabmap()
+                row("J5", (not c5.isError) and ktab not in m5, f"close reclaimed -> {text_of(c5).strip()[:60]!r}; gone={ktab not in m5}")
+                await call("hands_done", {})
         probe.close()
     except Exception as e:
         import traceback
@@ -1041,7 +1090,7 @@ async def main() -> int:
                             and not install_host._paths(test_host)[0].exists())
         print(f"teardown: chrome gone={gone}, temp profile removed={removed}, web dir removed={not os.path.exists(web)}, "
               f"own host key removed and the real registration untouched: {key_restored}")
-    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "E1", "E2", "E3", "E4", "E5"]
+    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "E1", "E2", "E3", "E4", "E5"]
     print("\nSUMMARY " + " ".join(f"{k}:{'PASS' if RESULTS.get(k, (False,))[0] else 'FAIL'}" for k in order))
     return 0 if all(RESULTS.get(k, (False,))[0] for k in order) else 1
 

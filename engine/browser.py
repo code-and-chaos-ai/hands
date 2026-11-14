@@ -386,6 +386,36 @@ class Browser:
             self.opened.add(int(res["id"]))
             return res
 
+    def _enter(self, kind: str, tab: int, session: str | None) -> dict:
+        """JOIN (a tab the person opened) or RECLAIM (one I opened and handed over): the tab's CURRENT page passes the
+        deny list and its site consent, then the person answers a card for THIS tab (Once or No: never remembered),
+        then the extension lets me in. Done lets go of a joined tab (never closed) and hands a reclaimed one back."""
+        from .identity import get as _identity
+        with self.lock:
+            self.h._check_stop("browser")
+            tab = self._tab(tab)
+            t = self._call("tabs.get", {"tabId": tab})
+            url = str(t.get("url") or "")
+            if not url.lower().startswith(("http://", "https://")):
+                raise BrowserError(f"tab {tab} isn't on a web page (it's on {url.split(':')[0]}:); nothing to {kind}")
+            self._gate_site(url)
+            title = str(t.get("title") or "")[:60]
+            what = "be in your tab with you" if kind == "join" else "take back the tab he handed you"
+            gate_consent(self.h, f"{kind}:{tab}", f"{title or policy.url_host(url)}",
+                         f"{_identity()['name']} wants to {what}: {url[:80]}")
+            name = "".join(ch for ch in str(session or _identity()["session"]) if ch.isprintable())[:24] or "rowan"
+            res = self._call(f"tabs.{kind}", {"tabId": tab, "session": name})
+            self.opened.add(tab)  # done lets go of it (joined) or hands it back (reclaimed)
+            self.looks.pop(tab, None)
+            self.refmaps.pop(tab, None)
+            return res
+
+    def join(self, tab: int, session: str | None = None) -> dict:
+        return self._enter("join", tab, session)
+
+    def reclaim(self, tab: int, session: str | None = None) -> dict:
+        return self._enter("reclaim", tab, session)
+
     def close(self, tab: int) -> dict:
         with self.lock:
             tab = self._tab(tab)
@@ -423,8 +453,8 @@ class Browser:
             tab = self._tab(tab)
             t0 = time.perf_counter()
             info = self._call("tabs.get", {"tabId": tab})
-            if not info.get("mine"):
-                raise BrowserError(f"tab {tab} is not one the agent opened; it never drives the person's tabs")
+            if not (info.get("mine") or info.get("joined")):
+                raise BrowserError(f"tab {tab} is not one the agent opened or joined; browser_join asks the person first")
             policy.check_url(info.get("url", ""))  # before anything attaches
             if clear_stop:  # a fresh look by me is how I come back after the person stopped it; act's closing look never is
                 self.h.resume("browser")

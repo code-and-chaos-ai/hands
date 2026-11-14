@@ -48,14 +48,19 @@ const FRAME_EVENTS = new Set(["Page.frameAttached", "Page.frameDetached", "Page.
 // ------------------------------------------------------------------ state
 async function load() {
   if (S.loaded) return;
-  const d = await chrome.storage.session.get(["mine", "groups", "stopped", "policy"]);
+  const d = await chrome.storage.session.get(["mine", "groups", "stopped", "policy", "handed"]);
   S.mine = d.mine || {};
+  S.handed = d.handed || {};   // tabs I opened and handed over (kept at done): the only ones I may reclaim
   S.groups = d.groups || {};
   S.policy = d.policy || null;
   Object.assign(stopped, d.stopped || {});
   S.loaded = true;
 }
-function save() { return chrome.storage.session.set({ mine: S.mine, groups: S.groups, stopped, policy: S.policy }); }
+function save() { return chrome.storage.session.set({ mine: S.mine, groups: S.groups, stopped, policy: S.policy, handed: S.handed || {} }); }
+// The person's tab: one Hands didn't open, or one it only JOINED (it stays theirs: their focus, never closed, never
+// blanked, its popups never adopted).
+function isHers(tabId) { const m = S.mine[String(tabId)]; return !m || m.mode === "joined"; }
+function isJoined(tabId) { const m = S.mine[String(tabId)]; return !!m && m.mode === "joined"; }
 
 // ------------------------------------------------------------------ native port
 function connect() {
@@ -116,7 +121,8 @@ function stripMark(t) { return (t || "").startsWith(TITLE_MARK) ? t.slice(TITLE_
 function tabBrief(t) {
   const m = S.mine[String(t.id)];
   return { id: t.id, window: t.windowId, title: stripMark(t.title), url: t.url || t.pendingUrl || "",
-           active: !!t.active, mine: !!m, session: m ? m.session : null, keep: m ? !!m.keep : false,
+           active: !!t.active, mine: !!m && m.mode !== "joined", joined: !!m && m.mode === "joined",
+           reclaimable: !m && !!(S.handed || {})[String(t.id)], session: m ? m.session : null, keep: m ? !!m.keep : false,
            loading: t.status === "loading", group: t.groupId };
 }
 function int(v, what) {
@@ -292,12 +298,15 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   closedTabs.add(tabId);
   if (closedTabs.size > 2000) closedTabs.delete(closedTabs.values().next().value);
   attached.delete(tabId);
-  if (S.mine[String(tabId)]) { delete S.mine[String(tabId)]; delete stopped[tabId]; save(); }
+  let changed = false;
+  if (S.handed && S.handed[String(tabId)]) { delete S.handed[String(tabId)]; changed = true; }
+  if (S.mine[String(tabId)]) { delete S.mine[String(tabId)]; delete stopped[tabId]; changed = true; }
+  if (changed) save();
 });
 
 // ------------------------------------------------------------------ what my tabs open is mine; the person's focus stays theirs
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
-  if (S.loaded && !S.mine[String(tabId)] && herActive[windowId] !== tabId) {
+  if (S.loaded && isHers(tabId) && herActive[windowId] !== tabId) {
     herPrev[windowId] = herActive[windowId];
     herActive[windowId] = tabId;
   }
@@ -307,12 +316,12 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
   await new Promise((r) => setTimeout(r, 250));   // a popup my tab just opened is adopted first, so it never counts as the person's
   try {
     const w = await chrome.windows.get(windowId, { populate: true });
-    if (!(w.tabs || []).every((t) => S.mine[String(t.id)])) herWindow = windowId;
+    if (!(w.tabs || []).every((t) => !isHers(t.id))) herWindow = windowId;
   } catch (e) { /* gone */ }
 });
 async function seedHerFocus() {
   try {
-    for (const t of await chrome.tabs.query({ active: true })) if (!S.mine[String(t.id)]) herActive[t.windowId] = t.id;
+    for (const t of await chrome.tabs.query({ active: true })) if (isHers(t.id)) herActive[t.windowId] = t.id;
     const w = await chrome.windows.getLastFocused();
     if (w && w.id != null) herWindow = w.id;
   } catch (e) { /* no windows yet */ }
@@ -353,11 +362,17 @@ async function commitOwner(tabId, url, how, again = false) {
               : "no request through my gate (service worker, back/forward cache or prerender)";
     if (!quiet) record(tabId, `landed on ${host} (served by ${via}); I left it`);
     stopped[tabId] = `my tab ended up on ${host}, a page I never touch; I left it`;
+    if (m.mode === "joined") {
+      // the person's own tab went somewhere I may not be: I step out of it; their tab is never moved or closed
+      stopped[tabId] = `the person's tab went to ${host}, a page I never touch; I stepped out of it`;
+      delete S.mine[String(tabId)];
+    }
     await save();
     if (attached.has(tabId)) {
       attached.delete(tabId);
       await new Promise((r) => chrome.debugger.detach({ tabId }, () => { void chrome.runtime.lastError; r(); }));
     }
+    if (m.mode === "joined") return;
     if (m.adopted) await chrome.tabs.remove(tabId);
     else await chrome.tabs.update(tabId, { url: "about:blank" });
   } catch (e) { /* already gone */ }
@@ -378,12 +393,12 @@ chrome.tabs.onCreated.addListener(async (t) => {
   await load();
   if (/^about:blank#rowan-open-/.test(t.pendingUrl || t.url || "")) return;   // my own tabs.open
   note({ created: t.id, opener: t.openerTabId });
-  if (t.openerTabId != null && S.mine[String(t.openerTabId)]) await adopt(t.id, t.openerTabId);
+  if (t.openerTabId != null && !isHers(t.openerTabId)) await adopt(t.id, t.openerTabId);
 });
 chrome.webNavigation.onCreatedNavigationTarget.addListener(async (d) => {
   await load();
   note({ navTarget: d.tabId, source: d.sourceTabId });
-  if (S.mine[String(d.sourceTabId)]) await adopt(d.tabId, d.sourceTabId);
+  if (!isHers(d.sourceTabId)) await adopt(d.tabId, d.sourceTabId);   // a joined tab is theirs: what it opens is theirs
 });
 async function adopt(tabId, fromId) {
   if (S.mine[String(tabId)]) return;   // already mine (both proofs can name the same tab)
@@ -860,8 +875,43 @@ const METHODS = {
     return { ...tabBrief(await chrome.tabs.get(tab.id)), group: { id: gid, title: g.title, color: g.color } };
   },
 
+  // JOIN: a tab the person opened and wants me in. Never one I opened or handed over (that's reclaim).
+  // The engine has already gated the tab's current URL and shown the person the card.
+  async "tabs.join"(params) {
+    const tabId = int(params.tabId, "tab");
+    const t = await getTab(tabId);
+    if (S.mine[String(tabId)]) throw E("bad", `tab ${tabId} is already one I'm in`);
+    if ((S.handed || {})[String(tabId)]) throw E("bad", `tab ${tabId} is one I opened and handed over: reclaim it instead`);
+    const url = t.url || t.pendingUrl || "";
+    guardUrl(url);
+    if (!navAllowed(url)) throw E("denied", "that tab is on a page I never touch");
+    S.mine[String(tabId)] = { session: String(params.session || "rowan").slice(0, 24), keep: true, mode: "joined",
+                              owner: live[params.__owner] || "unknown", root: tabId };
+    await save();
+    return tabBrief(await chrome.tabs.get(tabId));
+  },
+
+  // RECLAIM: a tab I opened and handed over; my full hands come back (closing included). Proof it was
+  // mine = the handed-over set, never a URL.
+  async "tabs.reclaim"(params) {
+    const tabId = int(params.tabId, "tab");
+    const t = await getTab(tabId);
+    if (S.mine[String(tabId)]) throw E("bad", `tab ${tabId} is already one I'm in`);
+    if (!(S.handed || {})[String(tabId)]) throw E("not_mine", `tab ${tabId} was never one I opened and handed over`);
+    const url = t.url || t.pendingUrl || "";
+    guardUrl(url);
+    if (!navAllowed(url)) throw E("denied", "that tab is on a page I never touch");
+    delete S.handed[String(tabId)];
+    // keep: true, so at done it is handed back again, not closed, unless I close it on purpose
+    S.mine[String(tabId)] = { session: String(params.session || "rowan").slice(0, 24), keep: true, mode: "reclaimed",
+                              owner: live[params.__owner] || "unknown", root: tabId };
+    await save();
+    return tabBrief(await chrome.tabs.get(tabId));
+  },
+
   async "tabs.close"({ tabId }) {
     mustBeMine(tabId);
+    if (isJoined(tabId)) throw E("joined", `tab ${tabId} is the person's: I joined it, and I never close it`);
     await getTab(tabId);
     await chrome.tabs.remove(tabId);
     delete S.mine[String(tabId)];
@@ -871,6 +921,7 @@ const METHODS = {
 
   async "tabs.keep"({ tabId, keep }) {
     mustBeMine(tabId);
+    if (isJoined(tabId) && keep === false) throw E("joined", `tab ${tabId} is the person's: it always stays open`);
     S.mine[String(tabId)].keep = keep !== false;
     await save();
     return { tabId, keep: S.mine[String(tabId)].keep };
@@ -928,7 +979,8 @@ async function release(ids) {
         await new Promise((r) => chrome.debugger.detach({ tabId: id }, () => { void chrome.runtime.lastError; r(); }));
         attached.delete(id);
       }
-      if (v.keep) kept.push(id);
+      if (v.mode === "joined") { /* the person's tab: let go, nothing else */ }
+      else if (v.keep) { kept.push(id); (S.handed || (S.handed = {}))[k] = true; }   // handed over: reclaimable
       else { try { await chrome.tabs.remove(id); closed.push(id); } catch (e) { /* already gone */ } }
       delete S.mine[k];
       delete stopped[id];
