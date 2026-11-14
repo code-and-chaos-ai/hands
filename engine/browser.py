@@ -323,7 +323,7 @@ class Browser:
 
     def _call(self, method: str, params: dict | None = None, **kw):
         params = dict(params or {})
-        params.setdefault("grantee", self._grantee())
+        params["grantee"] = self._grantee()  # always this engine's own session, never a caller's value
         try:
             return self.pipe.call(method, params, **kw)
         except BrowserStopped as e:

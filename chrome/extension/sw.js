@@ -109,8 +109,15 @@ async function handle(msg) {
     const params = msg.params && typeof msg.params === "object" && !Array.isArray(msg.params) ? { ...msg.params } : {};
     params.__owner = `${hostId}:${Number.isInteger(msg.client) ? msg.client : "?"}`;   // set here, never by a client
     await load();
-    // a joined / reclaimed tab answers only the session the person said yes to (house + session id), for every call
-    const jm = Number.isSafeInteger(params.tabId) ? S.mine[String(params.tabId)] : null;
+    // a joined / reclaimed tab answers only the session the person said yes to (house + session id), for every call.
+    // The grantee is the engine's own word: it guards sessions and agents from each other's yes; an engine holding
+    // this machine's key is trusted to name its session truthfully (it already has full hands in its own tabs).
+    if (params.tabId !== undefined) {
+      const n = typeof params.tabId === "string" && /^\d+$/.test(params.tabId) ? Number(params.tabId) : params.tabId;
+      if (!Number.isSafeInteger(n)) throw E("bad", "tabId must be an integer");
+      params.tabId = n;
+    }
+    const jm = params.tabId !== undefined ? S.mine[String(params.tabId)] : null;
     if (jm && jm.mode && msg.method !== "tabs.get" && String(params.grantee || "") !== jm.grantee) {
       throw E("not_mine", `tab ${params.tabId} was joined or reclaimed for another session; its yes isn't this session's`);
     }
