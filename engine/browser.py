@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from multiprocessing import connection as mpc
 
 from . import policy
+from . import secrets as secretscan
 from .chrome_key import load_or_create_key, pipe_address
 from .common import (TEXT_CAP, HandsError, NeedsConsent, Stopped, check_action, check_then,  # noqa: F401
                      close_with_look, gate_consent)
@@ -388,7 +389,17 @@ class Browser:
     # ------------------------------------------------ catalog
     def tabs(self) -> list:
         with self.lock:
-            return self._call("tabs.list")
+            return [self._scrub(t) for t in self._call("tabs.list")]
+
+    @staticmethod
+    def _scrub(t):
+        """A tab brief as I'm shown it: a secret in its title or URL (a token in a query string) is hidden."""
+        if isinstance(t, dict):
+            t = dict(t)
+            for k in ("title", "url"):
+                if isinstance(t.get(k), str):
+                    t[k] = secretscan.hide(t[k])[0]
+        return t
 
     def open(self, url: str, session: str | None = None, watch: bool = False) -> dict:
         from .identity import get as _identity
@@ -401,7 +412,7 @@ class Browser:
             name = "".join(ch for ch in str(session) if ch.isprintable())[:24] or _identity()["session"]
             res = self._call("tabs.open", {"url": url, "session": name, "watch": bool(watch)})
             self.opened.add(int(res["id"]))
-            return res
+            return self._scrub(res)
 
     def _enter(self, kind: str, tab: int, session: str | None) -> dict:
         """JOIN (a tab the person opened) or RECLAIM (one I opened and handed over): the tab's CURRENT page passes the
@@ -432,7 +443,7 @@ class Browser:
             self.opened.add(tab)  # done lets go of it (joined) or hands it back (reclaimed)
             self.looks.pop(tab, None)
             self.refmaps.pop(tab, None)
-            return res
+            return self._scrub(res)
 
     def leave(self, tab: int) -> dict:
         with self.lock:
@@ -493,7 +504,8 @@ class Browser:
                 self.h.resume("browser")
             approved, verdicts, _ = self._approved(tab, resume=clear_stop)
             r = self._call("look", {"tabId": tab, "screenshot": bool(screenshot), "tree": bool(tree or find),
-                                        "approved": approved, "resume": False})
+                                        "approved": approved, "resume": False,
+                                        "secrets": secretscan.raw_patterns()})
             return self._render(tab, r, verdicts, find, bool(diff), max(1000, min(60000, int(tree_cap))), t0)
 
     def _render(self, tab, r, verdicts, find, diff, cap, t0) -> tuple[str, list]:
@@ -583,9 +595,9 @@ class Browser:
         self.seq += 1
         lk = BLook(self.seq, tab, loader, refs, lines, time.time())
         self.looks[tab] = lk
-        title = str(r.get("title") or "")[:120]
+        title = secretscan.hide(str(r.get("title") or ""))[0][:120]
         ms = round((time.perf_counter() - t0) * 1000)
-        head = (f"look {lk.id} · tab {tab} · \"{title}\" · {str(r.get('url') or '')[:200]} · {len(refs)} refs · "
+        head = (f"look {lk.id} · tab {tab} · \"{title}\" · {secretscan.hide(str(r.get('url') or ''))[0][:200]} · {len(refs)} refs · "
                 f"frames {count['read']} read/{count['not']} not · {ms} ms"
                 f"{' · LOADING' if r.get('loading') else ''}{' · ACTIVE (the person can see it)' if r.get('active') else ''}\n")
         if isinstance(r.get("jpeg"), str):
@@ -594,6 +606,11 @@ class Browser:
                      f"{f', {nr} not rendered' if nr else ''}\n")
         if r.get("shot_error"):
             head += f"note: no screenshot: {r['shot_error']}\n"
+        if r.get("secrets_hidden"):
+            head += (f"secrets: {int(r['secrets_hidden'])} hidden (in the text as {secretscan.HIDDEN}, and blacked out "
+                     f"on the screenshot); never guess what is under them\n")
+        if r.get("secret_frames_unchecked"):
+            head += f"note: {int(r['secret_frames_unchecked'])} frame(s) not checked for secrets (unreadable here)\n"
         if find:
             q = find.casefold()
             hits = [l.strip() for l in rendered if q in l.casefold()]

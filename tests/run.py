@@ -21,11 +21,12 @@ SUITE = [  # (label, file, timeout s)
     ("policy(PW1-PW3)", "policy_test.py", 60),
     ("cleanup(CL0-CL2)", "cleanup_test.py", 120),
     ("join_desktop(DJ1-DJ8)", "join_desktop_test.py", 120),
+    ("secrets(SC1-SC4)", "secrets_test.py", 120),
     ("identity(ID1-ID4)", "identity_test.py", 60),
     ("hardening(HD1-HD10)", "hardening_test.py", 60),
     ("bouncer(BC1-BC22)", "bouncer_test.py", 120),
     ("bouncer_door(BD1-BD6)", "bouncer_door_test.py", 180),
-    ("browser(K-W,J1-J7,E1-E5)", "browser_test.py", 900),
+    ("browser(K-W,J1-J7,S1-S3,E1-E5)", "browser_test.py", 900),
 ]
 
 

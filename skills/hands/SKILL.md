@@ -40,6 +40,10 @@ own tab group · `browser_look(tab)` (accessibility tree as `[ref]`, diffed afte
 `browser_act(tab, look, actions)` · `browser_close(tab)`. A tab marked `{"keep": true}` is handed to the person
 at `hands_done`; all others close.
 
+Secrets: every look hides text shaped like a secret (`[secret hidden]` in the text, blacked out on the screenshot)
+and its header counts them. Never try to recover what is under a box, and never type a hidden value back in: ask
+the person.
+
 The person's own desktop windows: once their app is allowed, you're joined in their windows automatically. Look and
 act as usual, but closing is refused (closing keys, the title bar's Close, its window menu). Windows you launched
 keep your full hands. A refused close is theirs to do; tell them.

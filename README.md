@@ -29,6 +29,12 @@ window. You can always see what it is doing, and one keypress stops it.
 - **Asks first**: the first use of each app or site shows a card (No / Allow once / Always).
 - **Cleans up**: windows and tabs the agent opened close when it is done; anything with unsaved changes is left open
   and reported, never discarded. A window that holds your documents is never treated as the agent's.
+- **Hides secrets from the agent**: in every look, text that matches a secret (database connection strings with a
+  password, API keys and tokens from the common providers, JWTs, bearer tokens, private keys, labelled passwords)
+  is replaced with `[secret hidden]` and its element is blacked out on the screenshot, in Chrome (using the page's
+  own text) and on the desktop (using each window's own accessibility text). Titles and URLs are scrubbed too. The
+  header says how many were hidden. The pattern list is `engine/secret_patterns.json`. It catches text the page or
+  window exposes as text; a secret drawn as an image, on a canvas, or inside a frame Hands can't read is not caught.
 - **Never closes your windows**: once you allow an app, the agent can look and act in your own windows of it, but
   closing them is refused: closing keys (alt+F4, ctrl+F4, ctrl+W, ctrl+Q, alt+space), the title bar's Close button
   (found by asking the window itself, so it works in any language and even when something covers it), a right click

@@ -1038,7 +1038,7 @@ const METHODS2 = {
   },
 
   // Read only frames whose CURRENT url equals the engine's approval for that frame id.
-  async look({ tabId, screenshot, tree, approved, resume }) {
+  async look({ tabId, screenshot, tree, approved, resume, secrets }) {
     let tab = await getTab(tabId);
     mustBeMine(tabId);
     guardUrl(tab.url || tab.pendingUrl);
@@ -1049,6 +1049,9 @@ const METHODS2 = {
       throw E("frame_denied", "the page changed since I checked it; look again");
     overlay(tabId, { hands: "mark" }).catch(() => {});
     const out = { loaderId: ft.main.loaderId, frames: [] };
+    const pats = secretPatterns(secrets);
+    const secretNodes = [], hidden = new Set();
+    let scanned = 0, unchecked = 0;
     for (const f of ft.list) {
       const fr = { id: f.id, url: f.url, parent: f.parent };
       if (f.parent) {
@@ -1056,18 +1059,44 @@ const METHODS2 = {
         catch (e) { if (e.code === "stopped") throw e; }
       }
       if (approved[f.id] !== f.url) fr.skipped = true;
-      else if (f.remote) fr.error = "another process; open it as its own tab to read it";
-      else if (tree && out.frames.filter((x) => x.nodes).length < MAX_FRAMES) {
+      else if (f.remote) { fr.error = "another process; open it as its own tab to read it"; unchecked++; }
+      else if ((tree || (screenshot && pats.length)) && scanned < MAX_FRAMES) {
         try {
           const { nodes } = await cdp(tabId, "Accessibility.getFullAXTree", { frameId: f.id });
-          fr.nodes = nodes.slice(0, MAX_AX_NODES).map(slim);
+          scanned++;
+          const slimmed = [];
+          for (let k = 0; k < nodes.length; k++) {   // every node is checked for secrets, not only the ones I keep
+            const n = nodes[k];
+            const o = tree && k < MAX_AX_NODES ? slim(n) : null;
+            let hit = false, drawn = false;
+            const role = n.role ? String(n.role.value || "") : "";
+            for (const [key, short] of [["name", "n"], ["value", "v"]]) {
+              const raw = n[key] && n[key].value !== undefined && n[key].value !== "" ? String(n[key].value) : "";
+              if (!raw || !pats.length) continue;
+              const [h, hid] = hideSecrets(raw, pats);
+              if (!hid.length) continue;
+              hit = true;
+              hid.forEach((x) => hidden.add(x));
+              if (o) o[short] = h.slice(0, 400);
+              // boxed where the text is drawn: a text run, a field's value, a leaf. A container's name repeats its
+              // children's text (they are boxed themselves); the page's own name is its title, never on the page.
+              if (role !== "RootWebArea" && (key === "value" || role === "StaticText" || !(n.childIds && n.childIds.length)))
+                drawn = true;
+            }
+            if (drawn && n.backendDOMNodeId && !n.ignored) secretNodes.push({ b: n.backendDOMNodeId });
+            if (o) slimmed.push(o);
+          }
+          if (tree) fr.nodes = slimmed;
         } catch (e) {
           if (e.code === "stopped") throw e;
           fr.error = /frame|not found|no.*node/i.test(e.message) ? "cross-origin frame in another process" : e.message.slice(0, 120);
+          unchecked++;
         }
-      }
+      } else if (pats.length) unchecked++;
       out.frames.push(fr);
     }
+    if (pats.length) { out.secrets_hidden = hidden.size; out.secret_frames_unchecked = unchecked; }
+    hidden.clear();
     ms.tree = Date.now() - t0;
     if (screenshot) {
       const t1 = Date.now();
@@ -1079,8 +1108,10 @@ const METHODS2 = {
         if (ft0.incomplete) throw E("cover", "I couldn't list the frames inside a cross-site frame");
         const c0 = changes[tabId] || 0;
         const cover = framesToCover(ft0, approved);
-        const sc = cover.length ? await shotScale(tabId, ft0) : null;
+        const paint = cover.length || secretNodes.length;
+        const sc = paint ? await shotScale(tabId, ft0) : null;
         const b0 = cover.length ? await frameBoxes(tabId, ft0, cover) : { rects: [], notRendered: 0 };
+        const s0 = secretNodes.length ? await secretBoxes(tabId, secretNodes) : [];
         for (let attempt = 0; attempt < 2 && !raw; attempt++) {   // hidden tabs: a second ask usually lands at once
           try {
             raw = (await cdp(tabId, "Page.captureScreenshot", { format: "jpeg", quality: 70, optimizeForSpeed: true }, 3000)).data;
@@ -1094,10 +1125,12 @@ const METHODS2 = {
           // in between and every session still acknowledged; boxes from both sides are covered
           const ft1 = await frameTree(tabId);
           const b1 = cover.length ? await frameBoxes(tabId, ft1, cover) : { rects: [], notRendered: 0 };
+          const s1 = secretNodes.length ? await secretBoxes(tabId, secretNodes) : [];
           if (ft1.incomplete || frameKey(ft0) !== frameKey(ft1) || (changes[tabId] || 0) !== c0)
             throw E("cover", "frames changed during capture");
           if (!(await attachAcked(tabId))) throw E("cover", "a frame appeared whose insides I can't confirm");
-          out.jpeg = cover.length ? await redact(raw, b0.rects.concat(b1.rects), sc) : raw;
+          // secrets: boxed where they were before AND after the capture, so a scroll in between can't uncover one
+          out.jpeg = paint ? await redact(raw, b0.rects.concat(b1.rects, s0, s1), sc) : raw;
           out.covered = cover.length - Math.max(b0.notRendered, b1.notRendered);
           out.not_rendered = Math.max(b0.notRendered, b1.notRendered);
           delete out.shot_error;
@@ -1237,6 +1270,97 @@ Object.assign(METHODS, METHODS2);
 
 const PROPS = new Set(["focused", "disabled", "checked", "expanded", "selected", "required", "invalid", "readonly",
                        "pressed", "level", "multiline", "modal", "editable"]);
+// ------------------------------------------------------------------ secrets in what I'm shown
+// The engine sends the shared pattern list (regexes valid in Python and JavaScript) with each look. A match is
+// replaced in the text I get, and its element is blacked out on the screenshot. What was hidden never leaves here.
+const SECRET_HIDDEN = "[secret hidden]";
+let secretCache = { key: "", pats: [] };
+function secretPatterns(list) {
+  if (!Array.isArray(list) || !list.length) return [];
+  const key = JSON.stringify(list);
+  if (secretCache.key === key) return secretCache.pats;
+  const pats = [];
+  for (const p of list) {
+    const f = "g" + (String((p && p.flags) || "").includes("i") ? "i" : "");
+    try {
+      pats.push({ rx: new RegExp(p.regex, f), kind: p.kind || "token", checks: p.checks || {},
+                  end: p.end_regex ? new RegExp(p.end_regex, f) : null });
+    } catch (e) { throw E("bad", `secret pattern ${p && p.id} doesn't compile`); }
+  }
+  secretCache = { key, pats };
+  return pats;
+}
+function sEntropy(s) {
+  const n = s.length, c = {};
+  for (const ch of s) c[ch] = (c[ch] || 0) + 1;
+  return n ? -Object.values(c).reduce((a, k) => a + (k / n) * Math.log2(k / n), 0) : 0;
+}
+function sClasses(s) { return [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((r) => r.test(s)).length; }
+function sPasses(m, ck) {
+  if (!ck || !Object.keys(ck).length) return true;
+  const v = m[ck.group || 0] || "";
+  const cnt = (re) => (v.match(re) || []).length;
+  if (v.length < (ck.min_len || 0)) return false;
+  if (ck.reject && new RegExp(ck.reject).test(v)) return false;
+  if (ck.require_digit && !/[0-9]/.test(v)) return false;
+  if (ck.max_hex_share !== undefined) {
+    const an = v.replace(/[^A-Za-z0-9]/g, "");
+    if (an && cnt(/[0-9a-fA-F]/g) / an.length >= ck.max_hex_share) return false;
+  }
+  if (cnt(/[A-Z]/g) < (ck.min_upper || 0) || cnt(/[a-z]/g) < (ck.min_lower || 0) || cnt(/[0-9]/g) < (ck.min_digits || 0)) return false;
+  if (ck.words_need_digit && v.split(/\s+/).some((w) => w.length > 2 && !/[0-9]/.test(w))) return false;
+  if (sEntropy(v) < (ck.min_entropy || 0)) return false;
+  if (ck.min_classes && sClasses(v) < ck.min_classes && v.length < (ck.or_min_len || Infinity)) return false;
+  return true;
+}
+// the text with every secret replaced, and the hidden strings themselves (kept only to count distinct ones)
+function hideSecrets(text, pats) {
+  const found = [];
+  for (const p of pats) {
+    p.rx.lastIndex = 0;
+    let m;
+    while ((m = p.rx.exec(text)) !== null) {
+      if (m[0] === "") { p.rx.lastIndex++; continue; }
+      if (!sPasses(m, p.checks)) continue;
+      let e = m.index + m[0].length;
+      if (p.kind === "block") {
+        if (p.end) { p.end.lastIndex = e; const em = p.end.exec(text); e = em ? em.index + em[0].length : text.length; }
+        else e = text.length;
+      }
+      found.push([m.index, e]);
+    }
+  }
+  if (!found.length) return [text, []];
+  found.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [s, e] of found) {
+    if (merged.length && s <= merged[merged.length - 1][1]) merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], e);
+    else merged.push([s, e]);
+  }
+  let out = "", last = 0;
+  const hid = [];
+  for (const [s, e] of merged) { out += text.slice(last, s) + SECRET_HIDDEN; hid.push(text.slice(s, e)); last = e; }
+  return [out + text.slice(last), hid];
+}
+// boxes of the elements holding secrets, in viewport CSS pixels; one that can't be placed withholds the shot
+async function secretBoxes(tabId, list) {
+  const rects = [];
+  for (const s of list) {
+    let quads;
+    try { ({ quads } = await cdp(tabId, "DOM.getContentQuads", { backendNodeId: s.b })); }
+    catch (e) {
+      if (e.code === "stopped") throw e;
+      if (e.code === "cdp" && /could not compute content quads/i.test(e.message)) continue;   // not rendered: not on screen
+      throw E("cover", "a secret on the page can't be placed on the screenshot");
+    }
+    for (const q of quads || []) {
+      const xs = [q[0], q[2], q[4], q[6]], ys = [q[1], q[3], q[5], q[7]];
+      rects.push({ x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) });
+    }
+  }
+  return rects;
+}
+
 function slim(n) {
   const o = { i: n.nodeId, r: n.role ? String(n.role.value || "") : "", b: n.backendDOMNodeId };
   if (n.ignored) o.ig = 1;

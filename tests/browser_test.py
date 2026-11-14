@@ -64,6 +64,18 @@ $('color').addEventListener('change', e => rec('change-color', {v: e.target.valu
 let n = 1; function addItem() { const li = document.createElement('li'); li.textContent = 'Item ' + (++n); $('list').appendChild(li); }
 </script></body></html>"""
 HOME = "<!doctype html><meta charset=utf-8><title>Her tab</title><p>The person's own page</p>"
+# fake secrets (none real), one per line at the top; ordinary text far below
+FAKE_GHP = "gh" + "p_FaKe9Qw4Lm2Rt8Yv5Kp7Hj3Nb6Gc1Df0SaXz"  # assembled: no scanner sees a whole fake key
+FAKE_ANT = "sk-" + "ant-api03-FAKEkeyQw8Zt4Lm2Rx9Yv5Kp7Hj3Nb6Gc1Df0Sa"
+FAKE_AWS = "AKIA" + "FAKE0EXAMPLE7KEY"
+SECRETS_PAGE = """<!doctype html><meta charset=utf-8><title>keys {ghp}</title>
+<body style="margin:0;background:#fff;color:#000;font:20px monospace">
+<div style="height:40px">postgresql://neondb_owner:npg_Zx9Qw4Lm2Rt8Yv5Kp@ep-fake-meadow-00000.us-east-2.aws.neon.tech/neondb</div>
+<div style="height:40px">{ant}</div>
+<div style="height:40px">{aws}</div>
+<div style="height:40px"><input aria-label="token" style="font:20px monospace;width:600px" value="{ghp}"></div>
+<p style="margin-top:260px">Plain words stay readable</p></body>""".replace("{ghp}", FAKE_GHP).replace("{ant}", FAKE_ANT).replace("{aws}", FAKE_AWS)
+FAKE_SECRETS = ["npg_Zx9Qw4Lm2Rt8Yv5Kp", FAKE_ANT, FAKE_AWS, FAKE_GHP]
 INNER = """<!doctype html><meta charset=utf-8><title>inner</title><style>html,body{margin:0;background:#ff00ff}</style><button id=ib onclick="window.hit=1">Inner button</button>
 <input id=ii aria-label="Inner field">"""
 FRAMES = """<!doctype html><meta charset=utf-8><title>Frames</title><h1>Frames page</h1>
@@ -198,7 +210,7 @@ async def main() -> int:
                  "blank.html": BLANK, "jb.html": JB, "jack.html": JACK.replace("{pb}", str(pb)),
                  "nav.html": NAVP.replace("{pa}", str(pa)), "shadow.html": SHADOW.replace("{pb}", str(pb)),
                  "vlink.html": VLINK.replace("{pa}", str(pa)), "vsw.js": VSW, "swreg.html": SWREG,
-                 "jackl.html": JACKL.replace("{pb}", str(pb))}
+                 "jackl.html": JACKL.replace("{pb}", str(pb)), "secrets.html": SECRETS_PAGE}
         for name, body in files.items():
             with open(os.path.join(web, name), "w", encoding="utf-8") as f:
                 f.write(body)
@@ -1091,6 +1103,49 @@ async def main() -> int:
                 m6 = await tabmap()
                 row("J6", (not c6.isError) and ktab not in m6, f"close reclaimed -> {text_of(c6).strip()[:60]!r}; gone={ktab not in m6}")
                 await call("hands_done", {})
+
+                # ---------------- S1-S3 (secrets in what I'm shown: hidden in the text, blacked out on the screenshot)
+                res, _ = await call("browser_open", {"url": f"{A}/secrets.html", "session": "test"})
+                stab = json.loads(text_of(res))["id"]
+                opened_txt = text_of(res)
+                await asyncio.sleep(0.8)
+                res, _ = await call("browser_look", {"tab": stab, "screenshot": True})
+                stxt = text_of(res)
+                simgs = [c for c in res.content if c.type == "image"]
+                tabs_txt = text_of((await call("browser_tabs", {}))[0])
+                leaked = [s for s in FAKE_SECRETS if s in stxt or s in tabs_txt or s in opened_txt]
+                row("S1", not res.isError and not leaked and stxt.count("[secret hidden]") >= 4 and "secrets: " in stxt
+                    and "Plain words stay readable" in stxt,
+                    f"leaked={leaked}; hidden markers={stxt.count('[secret hidden]')}; "
+                    f"header={[l for l in stxt.splitlines() if l.startswith('secrets:')][:1]}")
+                fill_rows = plain_fill = 0
+                if simgs:
+                    sim = PILImage.open(io.BytesIO(base64.b64decode(simgs[0].data))).convert("RGB")
+                    W, H = sim.size
+                    px = sim.load()
+
+                    def fill(x, y):
+                        r_, g_, b_ = px[x, y]
+                        return abs(r_ - 58) < 22 and abs(g_ - 42) < 22 and abs(b_ - 51) < 22
+                    band = lambda y: sum(fill(x, y) for x in range(0, W, 4)) / (W / 4)
+                    # the four secret lines sit in the top 160 CSS px: find the scale from the image's own height
+                    for y in range(0, H, 2):
+                        share = band(y)
+                        if share > 0.15:
+                            if y < H * 0.45:
+                                fill_rows += 1
+                            else:
+                                plain_fill += 1
+                row("S2", bool(simgs) and fill_rows > 40 and plain_fill == 0,
+                    f"screenshot={bool(simgs)}; blacked rows in the secret band={fill_rows}; blacked rows below it={plain_fill}")
+                # S3: the same page with the secret list missing from the call is NOT what the engine sends: every look
+                # carries it (the engine adds it itself), so a plain look of the person's page has no secrets line
+                res, _ = await call("browser_look", {"tab": stab, "screenshot": False, "find": "Plain words"})
+                row("S3", not res.isError and "Plain words stay readable" in text_of(res)
+                    and not any(s in text_of(res) for s in FAKE_SECRETS),
+                    f"find on the page -> {text_of(res).strip().splitlines()[-1][:60]!r}")
+                await call("browser_close", {"tab": stab})
+                await call("hands_done", {})
         probe.close()
     except Exception as e:
         import traceback
@@ -1115,7 +1170,7 @@ async def main() -> int:
                             and not install_host._paths(test_host)[0].exists())
         print(f"teardown: chrome gone={gone}, temp profile removed={removed}, web dir removed={not os.path.exists(web)}, "
               f"own host key removed and the real registration untouched: {key_restored}")
-    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "E1", "E2", "E3", "E4", "E5"]
+    order = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "V2", "V3", "V4", "V5", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "D1", "D2", "D3", "D4", "D5", "D6", "J", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "S1", "S2", "S3", "E1", "E2", "E3", "E4", "E5"]
     print("\nSUMMARY " + " ".join(f"{k}:{'PASS' if RESULTS.get(k, (False,))[0] else 'FAIL'}" for k in order))
     return 0 if all(RESULTS.get(k, (False,))[0] for k in order) else 1
 

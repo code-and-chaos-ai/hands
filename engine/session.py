@@ -12,6 +12,7 @@ import uiautomation as auto
 import win32gui
 
 from . import identity, keys, policy, tree, win
+from . import secrets as secretscan
 from .common import (TEXT_CAP, HandsError, NeedsConsent, Stopped, Stops, check_action, check_then,  # noqa: F401
                      close_with_look, gate_consent, test_hooks)
 from .overlay_link import OverlayLink
@@ -288,31 +289,49 @@ class Hands:
         images: list[bytes] = []
         scale = 1.0
         notes = []
+        pops = self._popups(hwnd)
+        shots = []  # (window, image, its screen origin): encoded only after the secrets on it are blacked out
         if shot:
             img = win.capture(hwnd)
             if win.is_blank(img):
                 notes.append("screenshot came back blank (GPU surface or protected content)")
-            data, scale = win.to_jpeg(img)
-            images.append(data)
-            for ph in self._popups(hwnd):
-                pl, pt, pr, pb = win.frame_rect(ph)
-                pdata, _ = win.to_jpeg(win.capture(ph))
-                images.append(pdata)
-                notes.append(f"popup {ph} '{win.title_of(ph)[:40]}' at window ({round((pl - fl) * scale)},{round((pt - ft) * scale)}) "
-                             f"size {round((pr - pl) * scale)}x{round((pb - pt) * scale)} (image {len(images)})")
+            shots.append((hwnd, img, (fl, ft)))
+            for ph in pops:
+                pl, pt, _, _ = win.frame_rect(ph)
+                shots.append((ph, win.capture(ph), (pl, pt)))
+        nodes = []
+        text = ""
+        groups: dict[int, list] = {}
+        if show_tree or find or shot:  # a screenshot is checked for secrets through the window's own text
+            nodes = self.tree.snapshot(hwnd, (fl, ft))
+            groups[hwnd] = list(nodes)
+            for ph in pops:
+                more = self.tree.snapshot(ph, (fl, ft))
+                groups[ph] = more
+                for n in more:
+                    n.index = len(nodes)
+                    nodes.append(n)
+        hidden = self._hide_secrets(nodes)
+        if hidden:
+            notes.append(f"secrets: {hidden} hidden (in the text as {secretscan.HIDDEN}, blacked out on the "
+                         f"screenshot); never guess what is under them")
+        if shot:
+            for i, (h, img, origin) in enumerate(shots):
+                self._black_out(img, origin, groups.get(h, []))
+                data, sc = win.to_jpeg(img)
+                images.append(data)
+                if i == 0:
+                    scale = sc
+                else:
+                    pl, pt, pr, pb = win.frame_rect(h)
+                    notes.append(f"popup {h} '{secretscan.hide(win.title_of(h))[0][:40]}' at window "
+                                 f"({round((pl - fl) * scale)},{round((pt - ft) * scale)}) "
+                                 f"size {round((pr - pl) * scale)}x{round((pb - pt) * scale)} (image {len(images)})")
         else:
             l, t, r, b = w.rect
             long_edge = max(r - l, b - t)
             scale = min(1.0, win.MAX_LONG_EDGE / long_edge) if long_edge else 1.0
-        nodes = []
-        text = ""
         if show_tree or find:
-            nodes = self.tree.snapshot(hwnd, (fl, ft))
-            for ph in self._popups(hwnd):
-                more = self.tree.snapshot(ph, (fl, ft))
-                for n in more:
-                    n.index = len(nodes)
-                    nodes.append(n)
             if find:
                 hits = tree.find(nodes, find)
                 text = "\n".join(tree.render([n for n in nodes if n in hits or n.index == 0], (fl, ft), scale, tree_cap)[0].splitlines())
@@ -323,12 +342,54 @@ class Hands:
         self.look_seq += 1
         self.looks[hwnd] = Look(hwnd, nodes, (fl, ft), w.rect, scale, time.time(), self.look_seq)
         ms = round((time.perf_counter() - t0) * 1000)
-        head = (f"look {self.look_seq} · window {hwnd} · {w.app} · \"{w.title[:90]}\" · {fr - fl}x{fb - ft}px"
+        head = (f"look {self.look_seq} · window {hwnd} · {w.app} · \"{secretscan.hide(w.title)[0][:90]}\" · {fr - fl}x{fb - ft}px"
                 f"{f' · image scale {scale:.3f}' if scale != 1 else ''} · {len(nodes)} elements · {ms} ms\n"
                 f"coordinates: screenshot pixels, origin = window top-left\n")
         if notes:
             head += "note: " + "; ".join(notes) + "\n"
         return head + text, images
+
+    # ---------------------------------------------------------------- secrets in what I'm shown
+    @staticmethod
+    def _hide_secrets(nodes: list) -> int:
+        """Every element's own text (name, value, help) is checked; a secret is replaced in it, and the element is
+        marked to be blacked out on the screenshot. Returns how many distinct secrets were hidden."""
+        seen: set[str] = set()
+        for n in nodes:
+            hit = False
+            for get, put in ((lambda: n.name, lambda v: setattr(n, "name", v)),
+                             (lambda: n.props.get("value"), lambda v: n.props.__setitem__("value", v)),
+                             (lambda: n.props.get("help"), lambda v: n.props.__setitem__("help", v))):
+                raw = get()
+                if not isinstance(raw, str) or not raw:
+                    continue
+                for s, e, _ in secretscan.spans(raw):
+                    seen.add(raw[s:e])
+                    hit = True
+                if hit:
+                    put(secretscan.hide(raw)[0])
+            n.props["secret"] = hit
+        count = len(seen)
+        seen.clear()
+        return count
+
+    @staticmethod
+    def _black_out(img, origin: tuple[int, int], nodes: list) -> None:
+        """Paint over every element holding a secret, on this window's own image (its screen origin given)."""
+        boxes = []
+        for n in nodes:
+            l, t, r, b = n.rect
+            if not n.props.get("secret") or r <= l or b <= t:
+                continue
+            # a window's name is its title: drawn in its caption strip, not across the whole window
+            boxes.append((l, t, r, min(b, t + 48)) if n.ctype == "Window" else (l, t, r, b))
+        if not boxes:
+            return
+        from PIL import ImageDraw
+        d = ImageDraw.Draw(img)
+        ox, oy = origin
+        for l, t, r, b in boxes:
+            d.rectangle((l - ox - 3, t - oy - 3, r - ox + 3, b - oy + 3), fill=(58, 42, 51))
 
     # ================================================================ act
     def act(self, hwnd: int, actions: list[dict], then: str = "both", look_id: int | None = None) -> tuple[str, list[bytes]]:
