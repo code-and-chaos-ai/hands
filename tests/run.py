@@ -1,5 +1,6 @@
 """THE gate for Hands: runs every asserting test file (slice 1 + browser), prints ONE SUMMARY line, exits 1 if any
-fails. Criterion E (foreground fallback while the person types) needs a person's real hands: reported as SKIPPED-MANUAL, never PASS.
+fails. Criterion E (foreground fallback while the person types) needs a person's real hands: reported as SKIPPED-MANUAL, never PASS;
+run it with them, on their word, with tests\live_hands_busy.py (the scratch window's title tells them each step).
 proof_overlay.py makes proof screenshots for a human; it asserts nothing, so it isn't part of the gate.
 
     python -X utf8 tests\\run.py
