@@ -48,6 +48,17 @@ def _vk(token: str) -> tuple[int, bool]:
     raise KeyError_(f"Unknown key {token!r}")
 
 
+def closes(chord: str) -> bool:
+    """A chord that closes a window, a document or the app: alt+F4, ctrl+F4, ctrl+w, ctrl+shift+w, ctrl+q, and
+    alt+space (the window menu, where Close lives)."""
+    seq = parse(chord)
+    n = (len(seq) - 2) // 2
+    downs, vk = {d for d, _ in seq[:n]}, seq[n][0]
+    ctrl = bool({0x11, 0xA2, 0xA3} & downs)
+    alt = bool({0x12, 0xA4, 0xA5} & downs)
+    return (alt and vk in (0x73, 0x20)) or (ctrl and vk in (0x73, 0x57, 0x51))
+
+
 def parse(chord: str) -> list[tuple[int, bool]]:
     parts = [p for p in chord.replace(" ", "").split("+") if p] if chord.strip() != "+" else ["plus"]
     if not parts:

@@ -40,6 +40,10 @@ own tab group · `browser_look(tab)` (accessibility tree as `[ref]`, diffed afte
 `browser_act(tab, look, actions)` · `browser_close(tab)`. A tab marked `{"keep": true}` is handed to the person
 at `hands_done`; all others close.
 
+The person's own desktop windows: once their app is allowed, you're joined in their windows automatically. Look and
+act as usual, but closing is refused (closing keys, the title bar's Close, its window menu). Windows you launched
+keep your full hands. A refused close is theirs to do; tell them.
+
 Working in the same tab as the person:
 - `browser_join(tab)`: a tab THEY opened and want you in. They answer a card for that tab once; their yes lasts
   until the tab closes or you leave it, across turns and hands_done (which only detaches). Look and act as usual.

@@ -288,6 +288,33 @@ def foreground() -> int:
     return win32gui.GetForegroundWindow()
 
 
+def hit_code(hwnd: int, x: int, y: int) -> int:
+    """What this window says lies at a screen point (WM_NCHITTEST), whatever covers it: 20 close, 8 minimize,
+    9 maximize, 3 window menu, 2 caption... 0 when it doesn't answer."""
+    lp = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+    r = ctypes.c_size_t(0)
+    ok = ctypes.windll.user32.SendMessageTimeoutW(wintypes.HWND(hwnd), 0x0084, wintypes.WPARAM(0),
+                                                  wintypes.LPARAM(lp), 0x0002, 300, ctypes.byref(r))
+    return int(r.value) if ok else 0
+
+
+def close_hit(x: int, y: int, count: int = 1) -> bool:
+    """True when a click here would close the window under it, in any language: its caption Close button
+    (WM_NCHITTEST says HTCLOSE, or UI Automation names the element under the point AutomationId 'Close'), or its
+    window-menu icon (HTSYSMENU: a click opens the menu Close lives in, a double click closes)."""
+    root = root_at(x, y)
+    if root and hit_code(root, x, y) in (20, 3):  # HTCLOSE / HTSYSMENU
+        return True
+    try:
+        import uiautomation as auto
+        c = auto.ControlFromPoint(x, y)
+        if c and c.AutomationId == "Close" and c.ControlTypeName == "ButtonControl":
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def root_at(x: int, y: int) -> int:
     """The top-level window under a screen point."""
     h = user32.WindowFromPoint(wintypes.POINT(x, y))

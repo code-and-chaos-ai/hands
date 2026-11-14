@@ -29,6 +29,10 @@ window. You can always see what it is doing, and one keypress stops it.
 - **Asks first**: the first use of each app or site shows a card (No / Allow once / Always).
 - **Cleans up**: windows and tabs the agent opened close when it is done; anything with unsaved changes is left open
   and reported, never discarded. A window that holds your documents is never treated as the agent's.
+- **Never closes your windows**: once you allow an app, the agent can look and act in your own windows of it, but
+  closing them is refused: closing keys (alt+F4, ctrl+F4, ctrl+W, ctrl+Q, alt+space), the title bar's Close button
+  (found by asking the window itself, so it works in any language and even when something covers it) and its
+  window menu. Windows the agent opened keep its full hands.
 - **One agent at a time**: several agent sessions can each run Hands; a lease (the "bouncer") lets one hold the
   hands, tells the others exactly who holds them, keeps a line, and nudges the next one when they free.
 - **Chrome in background tabs**: the agent opens its own tabs, in its own tab group, and drives them through the

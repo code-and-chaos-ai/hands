@@ -42,6 +42,7 @@ class Hands:
         self.looks: dict[int, Look] = {}
         self.look_seq = 0
         self.launched: dict[int, str] = {}  # windows I opened (hwnd -> title), closed at done() unless kept
+        self.made: set[int] = set()  # every window I opened, kept ones included: my full hands stay in them
         self.stops = Stops()
         self.poll_events = None  # the browser side plugs in here: a stop from Chrome reaches the desktop too
         self.injected_until = 0
@@ -207,6 +208,7 @@ class Hands:
                            f"I touch nothing in it and won't close it")
         else:
             self.launched[found.id] = res["title"]
+            self.made.add(found.id)
         res["mine"] = found.id in self.launched
         return res
 
@@ -436,6 +438,50 @@ class Hands:
     def _ctl(self, n: tree.Node):
         return auto.Control.CreateControlFromElement(n.el)
 
+    # ---------------------------------------------------------------- the person's windows
+    def _is_hers(self, hwnd: int) -> bool:
+        """A window I didn't open (nor a dialog owned by one I opened) is the person's. Once its app has their yes I
+        am joined in it automatically: I look and act there, but I never close it."""
+        self.made = {h for h in self.made if win32gui.IsWindow(h)}
+        h = hwnd
+        for _ in range(8):
+            if not h:
+                return True
+            if h in self.made or h in self.launched:
+                return False
+            h = win32gui.GetWindow(h, 4)  # GW_OWNER
+        return True
+
+    def _never_close(self, w: win.Win, what: str) -> None:
+        raise HandsError(f"{what} would close {w.title[:50]!r}, and that window is the person's: I work in it with "
+                         f"them, but I never close it. If it should close, they close it.")
+
+    @staticmethod
+    def _in_title_bar(lk: Look, n: tree.Node) -> bool:
+        """The element sits in the window's own title bar (its Close button, its window menu)."""
+        depth = n.depth
+        for m in reversed(lk.nodes[:n.index]):
+            if m.depth < depth:
+                if m.ctype == "TitleBar":
+                    return True
+                depth = m.depth
+        return False
+
+    def _guard_node(self, w: win.Win, lk: Look, n: tree.Node, verb: str) -> None:
+        """Closing her window by an element: the title bar's Close (by its id, or because the window itself says its
+        close button is there: any language, even with something in front of it) or its window menu. In her title
+        bar only minimize and maximize stay open to me."""
+        if not self._is_hers(w.id):
+            return
+        if (n.ctype == "Button" and n.aid == "Close") or (self._in_title_bar(lk, n) and (
+                n.ctype in ("MenuBar", "MenuItem") or
+                (n.ctype == "Button" and win.hit_code(w.id, *n.center) not in (8, 9)))):
+            self._never_close(w, f"{verb} [{n.index}] {n.name[:30]!r}")
+
+    def _guard_click(self, w: win.Win, x: int, y: int, count: int = 1) -> None:
+        if self._is_hers(w.id) and win.close_hit(x, y, count):
+            self._never_close(w, "that click")
+
     # ---------------------------------------------------------------- one action
     def _do(self, w: win.Win, lk: Look, a: dict) -> tuple[str, bool]:
         check_action(a)
@@ -450,6 +496,7 @@ class Hands:
                 raise HandsError("button left|right|middle, count 1–3")
             if isinstance(target, int) and not isinstance(target, bool):
                 n = self._node(lk, target)
+                self._guard_node(w, lk, n, "clicking")
                 self._glide(*n.center, "click")
                 note = ""
                 if button == "left" and count == 1 and not a.get("real"):
@@ -458,8 +505,10 @@ class Hands:
                         return f"clicked [{n.index}] {n.name[:40]!r} via {how} (no cursor)", False
                     note = " — it has no clickable pattern, so real input"
                 x, y = self._node_pt(lk, w, n)
+                self._guard_click(w, x, y, count)
             else:
                 x, y = self._pt(lk, w, target)
+                self._guard_click(w, x, y, count=count)
                 self._glide(x, y, "click")
                 note = ""
             self._foreground(w, lambda: win.mouse_click(x, y, button, count), point=(x, y))
@@ -518,6 +567,8 @@ class Hands:
 
         if "key" in a:
             seq = keys.parse(str(a["key"]))
+            if keys.closes(str(a["key"])) and self._is_hers(w.id):
+                self._never_close(w, f"pressing {a['key']}")
             self._foreground(w, lambda: win.send_keys_raw(seq))
             return f"pressed {a['key']}", True
 
@@ -543,6 +594,8 @@ class Hands:
         for verb in ("expand", "collapse", "toggle", "select", "focus"):
             if verb in a:
                 n = self._node(lk, a[verb])
+                if verb != "focus":
+                    self._guard_node(w, lk, n, verb)
                 self._glide(*n.center, "click")
                 c = self._ctl(n)
                 if verb == "expand":
