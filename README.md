@@ -22,7 +22,8 @@ window. You can always see what it is doing, and one keypress stops it.
   cursor and focus are not touched.
 - **Real input only when unavoidable, politely**: it waits until your hands have rested ≥0.7 s, acts, returns your
   cursor at once and gives your window back. If you move during it, the batch stops.
-- **Always visible**: a soft glow round every screen while the agent works, a brighter border and a pill
+- **Always visible**: a soft glow round every screen whenever the agent works, in any window or none (a background
+  Chrome tab or a whole-screen look lights it too; it goes off when the agent is done), a brighter border and a pill
   ("<name> is working here · Esc Esc to stop · Stop") round the window it is in, and its own cursor that travels to
   each target before the action lands. None of it appears in screenshots (WDA_EXCLUDEFROMCAPTURE). The name,
   initial and colours are [configurable](#configuration).
