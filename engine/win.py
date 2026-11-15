@@ -280,6 +280,11 @@ def last_input_tick() -> int:
     return li.dwTime
 
 
+def remote_session() -> bool:
+    """This desktop is being used through Remote Desktop (SM_REMOTESESSION): its client echoes cursor moves back."""
+    return bool(user32.GetSystemMetrics(0x1000))
+
+
 def tick() -> int:
     return kernel32.GetTickCount() & 0xFFFFFFFF
 
@@ -474,4 +479,7 @@ def mouse_wheel(x: int, y: int, dy: int = 0, dx: int = 0) -> None:
 
 
 def set_cursor(x: int, y: int) -> None:
+    # a tagged move first, so the overlay knows this point is the agent's (a Remote Desktop client echoes it back
+    # later as fresh input), then SetCursorPos for the exact pixel
+    mouse_move(x, y)
     user32.SetCursorPos(x, y)

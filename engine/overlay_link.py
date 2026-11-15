@@ -1,7 +1,7 @@
 """The line to overlay.exe: JSON lines out on its stdin, events back on its stdout.
 
 ops  → target{hwnd,label} · mode{fg} · glide{x,y,kind,seq} · consent{seq,app,detail} · idle · quit
-events ← ready · arrived{seq} · consent{seq,choice} · stop · her_input{tick}
+events ← ready · arrived{seq} · consent{seq,choice} · stop · her_input{tick,why}
 Headless when overlay.exe is missing: everything still works, consent can't be asked.
 """
 from __future__ import annotations
@@ -26,6 +26,7 @@ class OverlayLink:
         self.waiters: dict[int, tuple[threading.Event, dict]] = {}
         self.stop_requested = False
         self.her_input_tick = 0
+        self.her_input_why = ""  # what her hands did last: "key pressed", "mouse button", "mouse moved 23 px"
         self.ready = threading.Event()
 
     # -------------------------------------------------- lifecycle
@@ -85,6 +86,7 @@ class OverlayLink:
             elif kind == "stop":
                 self.stop_requested = True
             elif kind == "her_input":
+                self.her_input_why = str(ev.get("why", ""))[:60]
                 self.her_input_tick = int(ev.get("tick", 0))
             elif kind in ("arrived", "consent"):
                 w = self.waiters.get(int(ev.get("seq", -1)))

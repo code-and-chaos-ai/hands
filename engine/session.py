@@ -20,6 +20,7 @@ from .overlay_link import OverlayLink
 SCAN_CAP = 5000  # elements read to check a screenshot for secrets; a window with more gets no screenshot
 IDLE_NEEDED_MS = 700
 IDLE_WAIT_S = 8.0
+REMOTE_ECHO_GRACE_MS = 1500  # headless only: how long a Remote Desktop client may take to echo the agent's move back
 ALIASES = {"calc": "calculator", "notepad": "notepad", "explorer": "file explorer", "settings": "settings",
            "paint": "paint", "word": "word", "excel": "excel", "chrome": "google chrome"}
 
@@ -113,10 +114,20 @@ class Hands:
 
     # ================================================================ gates
     def _her_hands_tick(self) -> int:
-        if self.ov.alive and self.ov.her_input_tick:
+        """When the person's hands last really moved (0 = not since the overlay started watching). The overlay's hooks
+        are the judge whenever it runs, even before it has seen her once: a 0 there means nobody touched anything, and
+        falling back to the system's last-input time would count Remote Desktop's echoes of the agent's own moves as
+        hers. Without the overlay, the last-input time is all there is: the agent's own input is ignored for a grace
+        after it, long enough in a remote session for the client's echo to come back."""
+        if self.ov.alive:
             return self.ov.her_input_tick
         t = win.last_input_tick()
-        return t if t > self.injected_until + 60 else 0
+        grace = REMOTE_ECHO_GRACE_MS if win.remote_session() else 60
+        return t if t > self.injected_until + grace else 0
+
+    def _her_hands_why(self) -> str:
+        why = self.ov.her_input_why if self.ov.alive else ""
+        return f" ({why})" if why else ""
 
     def _gate(self, w: win.Win) -> None:
         policy.check_denied(w.exe, w.app, w.title, w.cls, w.id)
@@ -425,7 +436,7 @@ class Hands:
                 self._check_stop()
                 hands = self._her_hands_tick()
                 if took_fg and hands and hands > start_tick:
-                    log.append(f"{i}: stopped — the person's hands moved, so the agent let go")
+                    log.append(f"{i}: stopped — the person's hands moved{self._her_hands_why()}, so the agent let go")
                     break
                 if not win32gui.IsWindow(hwnd):
                     log.append(f"{i}: the window closed; nothing more done")

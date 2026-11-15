@@ -25,6 +25,7 @@ SUITE = [  # (label, file, timeout s)
     ("glow(GL1-GL3)", "glow_test.py", 60),
     ("identity(ID1-ID4)", "identity_test.py", 60),
     ("hardening(HD1-HD10)", "hardening_test.py", 60),
+    ("her_hands(HH1-HH15)", "her_hands_test.py", 60),
     ("bouncer(BC1-BC22)", "bouncer_test.py", 120),
     ("bouncer_door(BD1-BD6)", "bouncer_door_test.py", 180),
     ("browser(K-W,J1-J7,S1-S4,E1-E5)", "browser_test.py", 900),

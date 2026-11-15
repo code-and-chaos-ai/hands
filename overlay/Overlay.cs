@@ -38,6 +38,8 @@ static class N
     [DllImport("user32.dll")] public static extern bool UnhookWindowsHookEx(IntPtr h);
     [DllImport("kernel32.dll")] public static extern IntPtr GetModuleHandle(string n);
     [DllImport("kernel32.dll")] public static extern uint GetTickCount();
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint f);
     [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
     public delegate IntPtr HookProc(int code, IntPtr w, IntPtr l);
@@ -109,6 +111,90 @@ class Layer : Form
     }
 }
 
+// Which input is the person's. Only REAL movement by a person counts: a key pressed down, a mouse button pressed, the
+// wheel, or the mouse travelling a real distance. Ignored: key-ups alone, zero-distance moves, and echoes, i.e. a
+// move that lands where the agent itself put the cursor a moment ago. Remote Desktop sends the agent's own cursor
+// moves back to the machine as fresh, non-injected input (the client follows the server's pointer and reports
+// where it now is), so without this the agent "felt the person's hands" every time it moved and let go.
+// Pure logic, no Win32: the hooks feed it, and `overlay.exe --judge` feeds it from a test.
+class InputJudge
+{
+    public const double STILL_PX = 1.5;   // a move shorter than this from where the cursor is: no movement at all
+    public const double MOVE_PX = 8;      // her path must add up to this much before it counts as her hands moving
+    public const uint PATH_GAP_MS = 300;  // a pause this long starts her path from zero again
+    public const int ECHO_PX = 8;         // a point this close to one the agent put the cursor on is that echo
+    public const uint ECHO_MS_LOCAL = 500, ECHO_MS_REMOTE = 3000;  // how long an echo can take to come back
+    const int RING = 256;
+    readonly int[] rx = new int[RING], ry = new int[RING]; readonly uint[] rt = new uint[RING];
+    int rnext = 0, rcount = 0;
+    double path = 0; uint lastMove = 0; bool anyMove = false;
+
+    // a point the agent's own input (or any injected input) put the cursor on
+    public void Mine(int x, int y, uint now)
+    {
+        rx[rnext] = x; ry[rnext] = y; rt[rnext] = now;
+        rnext = (rnext + 1) % RING; if (rcount < RING) rcount++;
+    }
+
+    bool Echo(int x, int y, uint now, bool remote)
+    {
+        uint window = remote ? ECHO_MS_REMOTE : ECHO_MS_LOCAL;
+        for (int i = 0; i < rcount; i++)
+        {
+            if (unchecked(now - rt[i]) > window) continue;
+            if (Math.Abs(rx[i] - x) <= ECHO_PX && Math.Abs(ry[i] - y) <= ECHO_PX) return true;
+        }
+        return false;
+    }
+
+    // a mouse event that wasn't the agent's: null = not her hands, else what her hands did
+    public string Mouse(int msg, int x, int y, int cx, int cy, uint now, bool remote)
+    {
+        switch (msg)
+        {
+            case 0x201: case 0x204: case 0x207: case 0x20B: return "mouse button";
+            case 0x20A: case 0x20E: return "mouse wheel";
+            case 0x200: break;
+            default: return null;  // button-ups and the rest: a press already counted
+        }
+        double d = Math.Sqrt((double)(x - cx) * (x - cx) + (double)(y - cy) * (y - cy));
+        if (d < STILL_PX) return null;              // a zero-distance move: nobody moved anything
+        if (Echo(x, y, now, remote)) return null;   // the agent's own move coming back
+        if (!anyMove || unchecked(now - lastMove) > PATH_GAP_MS) path = 0;
+        anyMove = true; lastMove = now;
+        path += d;
+        if (path < MOVE_PX) return null;            // a one-pixel bump isn't a hand on the mouse
+        string why = "mouse moved " + (int)Math.Round(path) + " px";
+        path = 0;
+        return why;
+    }
+
+    public string Key(int msg)
+    {
+        return (msg == 0x100 || msg == 0x104) ? "key pressed" : null;  // key-ups alone (a remote client's resync) aren't her
+    }
+
+    // test door: lines on stdin, one verdict per line on stdout ("hers <why>" | "no" | "ok")
+    //   mine x y t | mouse msg x y cx cy t remote(0/1) | key msg
+    public static void SelfTest()
+    {
+        InputJudge j = new InputJudge();
+        string line;
+        while ((line = Console.In.ReadLine()) != null)
+        {
+            string[] a = line.Trim().Split(' ');
+            if (a.Length == 0 || a[0] == "") continue;
+            string r;
+            if (a[0] == "mine") { j.Mine(int.Parse(a[1]), int.Parse(a[2]), uint.Parse(a[3])); r = "ok"; }
+            else if (a[0] == "mouse") r = j.Mouse(Convert.ToInt32(a[1], 16), int.Parse(a[2]), int.Parse(a[3]), int.Parse(a[4]), int.Parse(a[5]), uint.Parse(a[6]), a[7] == "1");
+            else if (a[0] == "key") r = j.Key(Convert.ToInt32(a[1], 16));
+            else r = "?";
+            Console.Out.WriteLine(r == null ? "no" : (r == "ok" ? "ok" : "hers " + r));
+            Console.Out.Flush();
+        }
+    }
+}
+
 class App
 {
     // the agent's own look, from the engine (engine/identity.py); these defaults match it
@@ -150,13 +236,15 @@ class App
     Rectangle stopRect; bool pillHover = false;
     // hooks
     IntPtr kbHook, msHook; N.HookProc kbProc, msProc; uint lastEsc = 0, lastHerSent = 0;
+    readonly InputJudge judge = new InputJudge();
     readonly object outLock = new object();
     System.Windows.Forms.Timer timer;
     SynchronizationContext ui;
     Font fLabel, fSmall, fTitle, fBtn;
 
-    static void Main()
+    static void Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--judge") { InputJudge.SelfTest(); return; }
         try { N.SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
         Application.EnableVisualStyles();
         new App().Run();
@@ -253,10 +341,11 @@ class App
         if (code >= 0)
         {
             N.KBD k = (N.KBD)Marshal.PtrToStructure(l, typeof(N.KBD));
-            bool injected = (k.flags & 0x10) != 0;
+            bool injected = (k.flags & 0x12) != 0;  // LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED
             if (!injected && (k.extra.ToUInt64() != N.HANDS_TAG))
             {
-                HerInput();
+                string why = judge.Key(w.ToInt32());
+                if (why != null) HerInput(why);
                 bool down = w.ToInt32() == 0x100 || w.ToInt32() == 0x104;
                 if (down && k.vk == 0x1B && (active || consentSeq >= 0))
                 {
@@ -280,16 +369,24 @@ class App
         if (code >= 0)
         {
             N.MSLL m = (N.MSLL)Marshal.PtrToStructure(l, typeof(N.MSLL));
-            bool injected = (m.flags & 0x1) != 0;
-            if (!injected && m.extra.ToUInt64() != N.HANDS_TAG) HerInput();
+            bool injected = (m.flags & 0x3) != 0;  // LLMHF_INJECTED | LLMHF_LOWER_IL_INJECTED
+            uint now = N.GetTickCount();
+            if (injected || m.extra.ToUInt64() == N.HANDS_TAG) judge.Mine(m.pt.x, m.pt.y, now);
+            else
+            {
+                N.POINT cur; N.GetCursorPos(out cur);  // the hook runs before the cursor moves: this is where it is now
+                bool remote = N.GetSystemMetrics(0x1000) != 0;  // SM_REMOTESESSION: Remote Desktop echoes moves back
+                string why = judge.Mouse(w.ToInt32(), m.pt.x, m.pt.y, cur.x, cur.y, now, remote);
+                if (why != null) HerInput(why);
+            }
         }
         return N.CallNextHookEx(msHook, code, w, l);
     }
 
-    void HerInput()
+    void HerInput(string why)
     {
         uint now = N.GetTickCount();
-        if (now - lastHerSent > 100) { lastHerSent = now; Emit("{\"ev\":\"her_input\",\"tick\":" + now + "}"); }
+        if (now - lastHerSent > 100) { lastHerSent = now; Emit("{\"ev\":\"her_input\",\"tick\":" + now + ",\"why\":\"" + why + "\"}"); }
     }
 
     // ------------------------------------------------------------- frame loop

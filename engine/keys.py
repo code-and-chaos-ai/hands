@@ -42,6 +42,10 @@ def _vk(token: str) -> tuple[int, bool]:
     if len(t) == 1:
         import ctypes
         r = ctypes.windll.user32.VkKeyScanW(ord(t))
+        if r == -1 and t.isascii() and t.isalnum():
+            # the active layout has no such character (Hebrew, Russian, Greek...): a Latin letter or digit in a
+            # chord means its key, and A-Z / 0-9 have the same virtual key codes on every layout
+            return ord(t.upper()), t.isupper()
         if r == -1:
             raise KeyError_(f"Can't map key {t!r}; type it as text instead.")
         return r & 0xFF, bool(r & 0x100)
