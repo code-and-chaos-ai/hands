@@ -190,5 +190,9 @@ while you are typing) needs a person's hands and is reported SKIPPED-MANUAL.
 Test switches only work together with `HANDS_TEST_HOOKS=1`: `HANDS_TEST_ALLOW=<key;key>` lets a test drive what it
 opens, `HANDS_PROOF=1` makes the overlay visible to screenshots. Never set them in normal use.
 
+## Security notes
+
+**18 November 2026.** In a whole-screen screenshot, a secret shown in large text (about 26 px letters and up) could reach the agent without being blacked out, about one time in seven in our tests. Fixed in the commit that adds this note. Window and browser looks were not affected: they hide secrets from the exact text, not from pixels. Known limits that remain: a random string of 24 to 32 characters with no label next to it, and the last line of a key that wraps over several lines in large text.
+
 ## License
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Code & Chaos.

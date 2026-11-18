@@ -439,6 +439,50 @@ def unread_hits(gray: np.ndarray, word_boxes: list[Box]) -> list[Hit]:
     return hits
 
 
+BIG_FACTORS = (2, 3, 4)        # the net is run again on copies shrunk this much: big letters become small ones
+BIG_MIN_H = 18                 # full-size height from which a run counts as big letters; smaller text is the 1x net's
+
+
+def big_unread_hits(gray: np.ndarray, word_boxes: list[Box], known: list[Hit]) -> list[Hit]:
+    """The unread-text net joins only the letters of SMALL text (its closing is 3 px wide), so a long string in big
+    letters is no 'unbroken run' to it and goes unseen: a zoomed terminal, a slide, a large-font editor. Shrunk, big
+    letters are small letters. So the same net runs on shrunken copies (area mean) with the OCR word boxes shrunk
+    alongside, and its hits come back at full size. A string already found (by a pattern or by the 1x net) is not
+    found twice: a second box over it would only merge two secrets into one in the count."""
+    H, W = gray.shape
+    out: list[Hit] = []
+    for f in BIG_FACTORS:
+        h, w = H // f * f, W // f * f
+        if h // f < 2 * UNREAD_MIN_H or w // f < UNREAD_MIN_W:
+            continue
+        small = gray[:h, :w].reshape(h // f, f, w // f, f).mean(axis=(1, 3)).astype(np.uint8)
+        words = [(x0 // f, y0 // f, -(-x1 // f), -(-y1 // f)) for x0, y0, x1, y1 in word_boxes]
+        for u in unread_hits(small, words):
+            x0, y0, x1, y1 = u.box
+            if (y1 - y0) * f < BIG_MIN_H:   # small text shrunk: its words run together and whole lines would hit
+                continue
+            box = (max(0, x0 * f - f), max(0, y0 * f - f), min(W, x1 * f + f), min(H, y1 * f + f))
+            def same_row(o: Hit) -> bool:
+                return _overlap(o.box, box) and (min(o.box[3], box[3]) - max(o.box[1], box[1])
+                                                 >= 0.5 * min(o.box[3] - o.box[1], box[3] - box[1]))
+            # Found already (by a pattern or by the 1x net): no second hit, so one secret stays one in the count.
+            # But if that hit covers only a PART of this string (a label and the start of a key), it is widened
+            # to cover all of it: sideways only, never taller.
+            cover = next((o for o in known if same_row(o)), None)
+            if cover is not None:
+                if cover.box[0] > box[0] + f or cover.box[2] < box[2] - f:
+                    cover.box = (min(cover.box[0], box[0]), cover.box[1], max(cover.box[2], box[2]), cover.box[3])
+                continue
+            twin = next((o for o in out if same_row(o)), None)
+            if twin is None:
+                out.append(Hit("unreadable_long_string", box, box[3] - box[1], "unread"))
+            else:   # the same string seen at two sizes: one hit, as wide as both, never taller than the taller one
+                tall = twin.box if twin.box[3] - twin.box[1] >= box[3] - box[1] else box
+                twin.box = (min(twin.box[0], box[0]), tall[1], max(twin.box[2], box[2]), tall[3])
+                twin.line_h = twin.box[3] - twin.box[1]
+    return out
+
+
 REREAD_MAX = 40                # past this many, the rest stay hidden without a second look
 REREAD_MIN_CHARS = 0.75        # share of the characters its width should hold that must be read (char ~ 0.5 x height)
 _RANDOM_RUN = re.compile("[A-Za-z0-9]{8,}")
@@ -625,6 +669,7 @@ def analyze(gray: np.ndarray, worker: OcrWorker, patterns: list[Pattern], scales
         hits.extend(found)
     # strings OCR skipped: those touching a found secret are hidden with it; the rest get a second, closer look
     unread = unread_hits(gray, words)
+    unread += big_unread_hits(gray, words, unread + hits)   # what a pattern or the 1x net already found is not found again
     beside = [u for u in unread if any(_overlap(u.box, h.box) for h in hits)]
     alone = [u for u in unread if not any(_overlap(u.box, h.box) for h in hits)]
     left = deadline - time.perf_counter()
