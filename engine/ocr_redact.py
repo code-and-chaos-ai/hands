@@ -186,6 +186,7 @@ class Hit:
     line_h: int
     kind: str = "token"
     words: frozenset = frozenset()
+    keep: bool = False              # stays hidden as it is: never widened, never handed to the second look
 
 
 def _union(boxes: list[Box]) -> Box:
@@ -443,14 +444,56 @@ BIG_FACTORS = (2, 3, 4)        # the net is run again on copies shrunk this much
 BIG_MIN_H = 18                 # full-size height from which a run counts as big letters; smaller text is the 1x net's
 
 
-def big_unread_hits(gray: np.ndarray, word_boxes: list[Box], known: list[Hit]) -> list[Hit]:
+def spans_rows(gray: np.ndarray, box: Box) -> bool:
+    """True when the box holds more than one line of text. Big lines set close together are joined by the net into
+    ONE sighting, and the second look, which reads a crop as one row, could clear it on the strength of the line it
+    can read. Read off the ink itself: per pixel row, the share of columns that hold ink. One line of text is one
+    hump (its letters' middle zone, thinning towards ascenders and descenders). Two humps with a clear dip between
+    them are two lines."""
+    x0, y0, x1, y1 = box
+    band = gray[max(0, y0):y1, max(0, x0):x1].astype(np.int16)
+    if band.shape[0] < 2 * UNREAD_MIN_H or band.shape[1] < 2:
+        return False
+    profile = (np.abs(band - int(np.median(band))) > 48).mean(axis=1)
+    k = max(1, band.shape[0] // 24)
+    profile = np.convolve(profile, np.ones(k) / k, mode="same")
+    peak = float(profile.max())
+    if peak <= 0:
+        return False
+    humps, start = [], None
+    for i, v in enumerate(list(profile >= 0.5 * peak) + [False]):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            if i - start >= 0.12 * band.shape[0]:
+                humps.append((start, i))
+            start = None
+    return any(float(profile[a[1]:b[0]].min()) < 0.35 * peak for a, b in zip(humps, humps[1:]) if b[0] > a[1])
+
+
+def big_unread_hits(gray: np.ndarray, word_boxes: list[Box], known: list[Hit]) -> tuple[list[Hit], list[Box]]:
     """The unread-text net joins only the letters of SMALL text (its closing is 3 px wide), so a long string in big
     letters is no 'unbroken run' to it and goes unseen: a zoomed terminal, a slide, a large-font editor. Shrunk, big
     letters are small letters. So the same net runs on shrunken copies (area mean) with the OCR word boxes shrunk
-    alongside, and its hits come back at full size. A string already found (by a pattern or by the 1x net) is not
-    found twice: a second box over it would only merge two secrets into one in the count."""
+    alongside, and each thing it sees there (a sighting) comes back at full size.
+
+    Returns (hits, covers). Whatever happens to a sighting, every pixel of it ends up inside a hidden box:
+    - it shares its row with a hit found another way (`known`: a pattern, or the 1x net): that hit is left exactly as
+      it is, and the sighting itself becomes a cover: a box that is blacked out and nothing else. It is not counted
+      and not grouped (the secret is already counted once) and it is never looked at again;
+    - it shares its row with an earlier sighting: the two are one hit over their full union, in both directions. If
+      that union is clearly taller than either (it took in rows of a neighbouring line), the hit is marked `keep`:
+      the second look judges one row at a time and must not clear it;
+    - otherwise it is a hit of its own, like any string the 1x net could not read.
+    A hit whose ink clearly shows two lines (`spans_rows`) is marked `keep` as well, merged or not. That check is
+    partial: when the second line does not dip clearly below the first, two lines can still read as one."""
     H, W = gray.shape
     out: list[Hit] = []
+    covers: list[Box] = []
+
+    def same_row(a: Box, b: Box) -> bool:
+        return _overlap(a, b) and min(a[3], b[3]) - max(a[1], b[1]) >= 0.5 * min(a[3] - a[1], b[3] - b[1])
+
     for f in BIG_FACTORS:
         h, w = H // f * f, W // f * f
         if h // f < 2 * UNREAD_MIN_H or w // f < UNREAD_MIN_W:
@@ -462,25 +505,22 @@ def big_unread_hits(gray: np.ndarray, word_boxes: list[Box], known: list[Hit]) -
             if (y1 - y0) * f < BIG_MIN_H:   # small text shrunk: its words run together and whole lines would hit
                 continue
             box = (max(0, x0 * f - f), max(0, y0 * f - f), min(W, x1 * f + f), min(H, y1 * f + f))
-            def same_row(o: Hit) -> bool:
-                return _overlap(o.box, box) and (min(o.box[3], box[3]) - max(o.box[1], box[1])
-                                                 >= 0.5 * min(o.box[3] - o.box[1], box[3] - box[1]))
-            # Found already (by a pattern or by the 1x net): no second hit, so one secret stays one in the count.
-            # But if that hit covers only a PART of this string (a label and the start of a key), it is widened
-            # to cover all of it: sideways only, never taller.
-            cover = next((o for o in known if same_row(o)), None)
-            if cover is not None:
-                if cover.box[0] > box[0] + f or cover.box[2] < box[2] - f:
-                    cover.box = (min(cover.box[0], box[0]), cover.box[1], max(cover.box[2], box[2]), cover.box[3])
+            if any(same_row(o.box, box) for o in known):
+                covers.append(box)
                 continue
-            twin = next((o for o in out if same_row(o)), None)
-            if twin is None:
-                out.append(Hit("unreadable_long_string", box, box[3] - box[1], "unread"))
-            else:   # the same string seen at two sizes: one hit, as wide as both, never taller than the taller one
-                tall = twin.box if twin.box[3] - twin.box[1] >= box[3] - box[1] else box
-                twin.box = (min(twin.box[0], box[0]), tall[1], max(twin.box[2], box[2]), tall[3])
-                twin.line_h = twin.box[3] - twin.box[1]
-    return out
+            twins = [o for o in out if same_row(o.box, box)]
+            if not twins:
+                out.append(Hit("unreadable_long_string", box, box[3] - box[1], "unread", keep=spans_rows(gray, box)))
+                continue
+            tallest = max([box[3] - box[1]] + [t.box[3] - t.box[1] for t in twins])
+            first = twins[0]
+            first.box = _union([box] + [t.box for t in twins])
+            first.line_h = min(first.box[3] - first.box[1], tallest)
+            first.keep = (first.keep or any(t.keep for t in twins) or first.box[3] - first.box[1] > 1.25 * tallest
+                          or spans_rows(gray, first.box))
+            for t in twins[1:]:   # this sighting bridged hits that had not touched: they are one now
+                out.remove(t)
+    return out, covers
 
 
 REREAD_MAX = 40                # past this many, the rest stay hidden without a second look
@@ -669,9 +709,11 @@ def analyze(gray: np.ndarray, worker: OcrWorker, patterns: list[Pattern], scales
         hits.extend(found)
     # strings OCR skipped: those touching a found secret are hidden with it; the rest get a second, closer look
     unread = unread_hits(gray, words)
-    unread += big_unread_hits(gray, words, unread + hits)   # what a pattern or the 1x net already found is not found again
-    beside = [u for u in unread if any(_overlap(u.box, h.box) for h in hits)]
-    alone = [u for u in unread if not any(_overlap(u.box, h.box) for h in hits)]
+    big, covers = big_unread_hits(gray, words, unread + hits)
+    unread += big
+    # hidden without a second look: what touches a found secret, and a box that already holds more than one row
+    beside = [u for u in unread if u.keep or any(_overlap(u.box, h.box) for h in hits)]
+    alone = [u for u in unread if not (u.keep or any(_overlap(u.box, h.box) for h in hits))]
     left = deadline - time.perf_counter()
     if alone and left <= 0:
         raise OcrError(f"OCR timed out after {timeout:.1f} s")
@@ -690,8 +732,9 @@ def analyze(gray: np.ndarray, worker: OcrWorker, patterns: list[Pattern], scales
         boxes.append(pad(b, hh.line_h, W, H))
 
     # every skipped string stays blacked out; one touching a secret is counted with it (see the grouping below)
-    unread = [Hit(u.pattern, widen_to_ink(gray, u.box, u.line_h), u.line_h, u.kind) for u in unread]
+    unread = [u if u.keep else Hit(u.pattern, widen_to_ink(gray, u.box, u.line_h), u.line_h, u.kind) for u in unread]
     boxes += [pad(u.box, u.line_h, W, H) for u in unread]
+    boxes += covers   # sightings of what was already found another way: blacked out whole, counted nowhere
 
     # count: everything hidden on one text row with less than ~2 characters between is one item (a secret seen by
     # several patterns or passes, or a string the pixels split at ':' or '='); a wrapped continuation never counts

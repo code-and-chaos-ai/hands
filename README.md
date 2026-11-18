@@ -194,5 +194,7 @@ opens, `HANDS_PROOF=1` makes the overlay visible to screenshots. Never set them 
 
 **18 November 2026.** In a whole-screen screenshot, a secret shown in large text (about 26 px letters and up) could reach the agent without being blacked out, about one time in seven in our tests. Fixed in the commit that adds this note. Window and browser looks were not affected: they hide secrets from the exact text, not from pixels. Known limits that remain: a random string of 24 to 32 characters with no label next to it, and the last line of a key that wraps over several lines in large text.
 
+**Same day, a follow-up.** A partly covered string in large text could keep a few pixel rows visible: fixed in this commit. Two lines of large text set close together can be judged as one line, and a secret on one of them shown when the other line is readable: this commit catches the clear cases, not all of them (in our tests the key stayed visible in 1 of 1,440 such cards, before and after).
+
 ## License
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Code & Chaos.
