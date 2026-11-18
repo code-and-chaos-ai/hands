@@ -184,6 +184,64 @@ def main() -> int:
         one = (a[0] - 4, a[1] - 4, a[2] + 4, a[3] + 4)
         check(tag + ": one line alone is still one line", not redact.spans_rows(g, one))
 
+    # 9. the INK of the whole string, not the net's box: a cover and a keep hit hide all of it. The net sees the
+    #    string on shrunken copies, so a sighting can stop short of the string's real ends (it can see only part).
+    def drawn(text, size, fname, dark, spacing=1.6, lines=None):
+        bg, fg = ((16, 24, 32), (255, 255, 255)) if dark else ((255, 255, 255), (36, 36, 36))
+        im = Image.new("RGB", (1920, 720), bg)
+        d = ImageDraw.Draw(im)
+        f = ImageFont.truetype(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Fonts", fname), size)
+        for i, line in enumerate(lines or [text]):
+            d.text((80, 150 + int(i * size * spacing)), line, fill=fg, font=f)
+        px = np.asarray(im)
+        ink = np.abs(px.astype(np.int16) - np.array(bg, np.int16)).max(axis=2) > 60
+        g = (px[..., 0].astype("uint16") * 77 + px[..., 1].astype("uint16") * 150
+             + px[..., 2].astype("uint16") * 29 >> 8).astype("uint8")
+        return g, ink
+
+    def visible(ink, boxes):
+        m = np.zeros(ink.shape, bool)
+        for x0, y0, x1, y1 in boxes:
+            m[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] = True
+        return int((ink & ~m).sum())
+
+    KEY = "Zq7Lm2Pv8Rt4Ky6Nb1Hd3Fg5Js0AaBbCcDdEeFfGg9Hh"
+    for size, fname, dark in ((64, "segoeui.ttf", True), (80, "segoeui.ttf", False), (80, "segoeuib.ttf", False),
+                              (40, "consola.ttf", True), (52, "consola.ttf", False)):
+        g, ink = drawn(KEY, size, fname, dark)
+        ys, xs = np.nonzero(ink)
+        string_box = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        # a hit found another way covers the start of the key and only its middle rows; the net sees only the end
+        mid = (string_box[1] + string_box[3]) // 2
+        known = (string_box[0], mid - size // 6, string_box[0] + (string_box[2] - string_box[0]) // 3, mid + size // 6)
+        tail = ((string_box[0] + string_box[2]) // 2 // 4, (string_box[1] + 2) // 4, (string_box[2] - 3) // 4, (string_box[3] - 2) // 4)
+
+        class OneWord(Reader):
+            def recognize(self, gray_, timeout=4.0):   # the first read finds the labelled start, as a pattern would
+                return [[("sk-ant-api03-Zq7Lm2Pv8Rt4Ky6Nb1Hd3Fg5J", known[0], known[1], known[2] - known[0], known[3] - known[1])]]
+        redact.unread_hits = lambda small, words: [] if small.shape[1] == 1920 else (
+            [redact.Hit("unreadable_long_string", tail, tail[3] - tail[1], "unread")] if round(1920 / small.shape[1]) == 4 else [])
+        try:
+            r = redact.analyze(g, OneWord(), redact.load_patterns(), (1,), 6.0)
+        finally:
+            redact.unread_hits = real_net
+        tag = f"ink beside a cover ({fname[:-4]} {size}px {'dark' if dark else 'light'})"
+        check(tag + ": every ink pixel of the key is hidden", visible(ink, r.boxes) == 0, f"{visible(ink, r.boxes)} px visible")
+
+        # the same string, sighted by the net only in part, at two factors whose rows differ: a keep hit
+        part2 = ((string_box[0] + string_box[2]) // 2 // 2, (string_box[1] - 6) // 2, (string_box[2] - 4) // 2, (string_box[3] - 4) // 2)
+        part4 = ((string_box[0] + string_box[2]) // 2 // 4, (string_box[1] + 6) // 4, (string_box[2] - 4) // 4, (string_box[3] + 8) // 4)
+        wide = {2: [part2], 4: [part4]}   # these cards are 1920 px wide: the factor is read off that width
+        redact.unread_hits = lambda small, words: [] if small.shape[1] == 1920 else [
+            redact.Hit("unreadable_long_string", bx, bx[3] - bx[1], "unread") for bx in wide.get(round(1920 / small.shape[1]), [])]
+        redact.second_look = lenient
+        try:
+            r = redact.analyze(g, Reader(), redact.load_patterns(), (1,), 6.0)
+        finally:
+            redact.unread_hits, redact.second_look = real_net, real_look
+        tag = f"ink of a keep hit ({fname[:-4]} {size}px {'dark' if dark else 'light'})"
+        check(tag + ": every ink pixel of the key is hidden", visible(ink, r.boxes) == 0, f"{visible(ink, r.boxes)} px visible")
+
     print("\nALL GREEN" if not failures else f"\n{len(failures)} FAILURE(S)")
     return 1 if failures else 0
 

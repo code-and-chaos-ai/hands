@@ -196,5 +196,7 @@ opens, `HANDS_PROOF=1` makes the overlay visible to screenshots. Never set them 
 
 **Same day, a follow-up.** A partly covered string in large text could keep a few pixel rows visible: fixed in this commit. Two lines of large text set close together can be judged as one line, and a secret on one of them shown when the other line is readable: this commit catches the clear cases, not all of them (in our tests the key stayed visible in 1 of 1,440 such cards, before and after).
 
+**Same day, last follow-up.** A string in large text that the check had seen only in part could keep its remaining characters readable in one case (a box kept from the second look). Fixed in this commit.
+
 ## License
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Code & Chaos.
